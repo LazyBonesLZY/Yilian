@@ -74,6 +74,8 @@ android {
 
     buildFeatures {
         compose = true
+        // 设置页的「关于」要拿 VERSION_NAME / VERSION_CODE
+        buildConfig = true
     }
 
     compileOptions {

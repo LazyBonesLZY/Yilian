@@ -1,5 +1,8 @@
 package com.esurfing.client.ui
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +41,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.esurfing.client.BuildConfig
 import com.esurfing.client.core.AppLog
 import com.esurfing.client.core.AppSettings
 import com.esurfing.client.core.Channel
@@ -481,7 +485,39 @@ private fun SettingsPage(modifier: Modifier, padding: PaddingValues, settings: A
                 )
             }
         }
+
+        item { SmallTitle(text = "关于") }
+        item {
+            val context = LocalContext.current
+            Card(modifier = Modifier.fillMaxWidth()) {
+                InfoRow("版本", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                RowDivider()
+                LinkRow("项目地址", ProjectUrl) { openUrl(context, ProjectUrl) }
+                RowDivider()
+                LinkRow("上游 C 版", UpstreamUrl) { openUrl(context, UpstreamUrl) }
+            }
+        }
+        item {
+            Text(
+                modifier = Modifier.padding(horizontal = CardPadding, vertical = 8.dp),
+                text = "协议流程与会话算法移植自上游 C 版, 以 Apache-2.0 授权。" +
+                    "认证失败可以带上日志到项目地址提 issue。",
+                fontSize = 12.sp,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+        }
     }
+}
+
+private const val ProjectUrl = "https://github.com/LazyBonesLZY/Yilian"
+private const val UpstreamUrl = "https://github.com/BadGhost520/ESurfingClient-CVersion"
+
+/** 设备上没浏览器时 startActivity 会抛 ActivityNotFoundException, 不能让它把设置页带崩。 */
+private fun openUrl(context: Context, url: String) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
+        .onFailure { AppLog.warn("打不开链接 $url: ${it.javaClass.simpleName}") }
 }
 
 @Composable

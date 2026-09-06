@@ -2,6 +2,7 @@ package com.esurfing.client.ui
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -126,6 +127,29 @@ fun InfoRow(
             fontSize = 14.sp,
             fontFamily = if (monospace) FontFamily.Monospace else null,
             textAlign = TextAlign.End,
+        )
+    }
+}
+
+/**
+ * 可点击的链接行：标题在上，地址在下。
+ * 仓库地址比 [InfoRow] 里的值长得多，塞进同一行会被折成好几段，所以单独占一行。
+ */
+@Composable
+fun LinkRow(title: String, url: String, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            // clickable 放在 padding 之前，整行（含留白）都能点
+            .clickable(onClick = onClick)
+            .padding(horizontal = CardPadding, vertical = 11.dp),
+    ) {
+        Text(text = title, fontSize = 14.sp)
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = url,
+            fontSize = 12.sp,
+            color = MiuixTheme.colorScheme.primary,
         )
     }
 }
