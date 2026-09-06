@@ -58,13 +58,26 @@ internal class DesEcbSixCipher(key: ByteArray) : SessionCipher {
 /**
  * 9ABF4D29-34DB-4CE9-BB8C-7E371D637758：双重 3DES-CBC。
  * 第一轮用 key[24..47]，第二轮用 key[0..23]，两轮各自从 IV 重新链接。
+ *
+ * Linux 系的 1A7343EC 结构完全一样，只是两轮各带一个 IV，所以这里把第二个 IV
+ * 做成可选参数（默认与第一个相同）而不是另写一个类。
  */
-internal class DesEdeDoubleCbcCipher(key: ByteArray, iv: ByteArray) : SessionCipher {
+internal class DesEdeDoubleCbcCipher(
+    key: ByteArray,
+    iv: ByteArray,
+    iv2: ByteArray = iv,
+) : SessionCipher {
 
     private val key = key.copyOf(48)
-    private val iv = iv.copyOf(DES_BLOCK)
+
+    /** 索引与 keyBase 对应：keyBase 24 那轮用 ivFirst，keyBase 0 那轮用 ivSecond。 */
+    private val ivFirst = iv2.copyOf(DES_BLOCK)
+    private val ivSecond = iv.copyOf(DES_BLOCK)
+
+    private fun ivFor(keyBase: Int) = if (keyBase == 24) ivFirst else ivSecond
 
     private fun cbcPass(buf: ByteArray, keyBase: Int) {
+        val iv = ivFor(keyBase)
         val prev = iv.copyOf()
         val t = ByteArray(8)
         val a = ByteArray(8)
@@ -81,6 +94,7 @@ internal class DesEdeDoubleCbcCipher(key: ByteArray, iv: ByteArray) : SessionCip
     }
 
     private fun cbcPassInverse(buf: ByteArray, keyBase: Int) {
+        val iv = ivFor(keyBase)
         val a = ByteArray(8)
         val b = ByteArray(8)
         val c = ByteArray(8)

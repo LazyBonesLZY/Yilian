@@ -20,7 +20,7 @@
 ## 功能
 
 - 完整 CCTP 认证流程：探测 → 跟随 BAS 重定向取门户配置 → 初始化会话取 Algo-ID → 取 ticket → 登录 → 心跳 → 登出
-- 九种 Android 算法集的会话加解密，与 C 版逐字节一致（33 条固定向量回归）
+- **C 版 24 个 Algo-ID 全部覆盖**（Android 9 + Linux 6 + 旧版 9），与 C 版逐字节一致，纯 Kotlin 实现无 native 依赖
 - 前台服务常驻，可选开机自启
 - **掉线检测与自动重连**：账号被限制多设备时会被静默踢下线，本客户端会主动发现并重新认证
 - 两档保活策略，在省电与及时性之间取舍
@@ -109,6 +109,10 @@ AC 的 IP 由现场下发、无法预先枚举，所以没法收窄成域名白�
 
 ## 支持的 Algo-ID
 
+C 版的 **24 个 Algo-ID 已全部覆盖**，服务端下发哪一个都能认。
+
+### 现行 Android 算法集
+
 | Algo-ID | 算法 |
 |---|---|
 | 07E824B2-… | SNOW3G 变体流密码 |
@@ -118,9 +122,30 @@ AC 的 IP 由现场下发、无法预先枚举，所以没法收窄成域名白�
 | 9ABF4D29-… | 双重 3DES-CBC |
 | AD8BB5B0-… | 六层 DES-ECB |
 
-C 版还支持 6 个 Linux 系算法（`1A7343EC`、`45433DCF`、`4BA5496A`、`60639D8B`、
-`AB6C8EBE`、`B306E770`），本移植未覆盖。若服务端下发这些 ID，界面会提示
-"服务器下发了尚未支持的算法"并停止，此时把日志里的 Algo-ID 反馈上来即可补齐。
+### Linux 系算法集
+
+Algo-ID 由 AC 下发，与客户端跑在什么系统上无关，所以 Android 端同样可能收到这一族。
+
+| Algo-ID | 算法 |
+|---|---|
+| 45433DCF-… / 4BA5496A-… | 双层 AES-128（标准密钥扩展），CBC / ECB |
+| 60639D8B-… / AB6C8EBE-… | 三层 XTEA，ECB（大端）/ CBC（小端） |
+| 1A7343EC-… | 双重 3DES-CBC |
+| B306E770-… | 六层 DES-ECB |
+
+这一族与 Android 那族看着像，细节处处不同：AES 用标准密钥扩展而非改版的、XTEA 的
+delta 是正的、AES-CBC 还会把每层的全零 IV 拼进密文（密文因此比明文多 32 字节，
+开头固定 32 个 0）。最后这条看着像 bug，但 C 版就是这么发的、服务端也这么收，照抄未改。
+
+### 旧版 Android 算法集
+
+C 版里这九个连同密钥被整体注释掉了（标注"已弃用"），但服务端仍可能下发，所以照样认：
+`CAFBCBAD` `A474B1C2` `5BFBA864` `6E0B65FF` `B809531F` `F3974434` `ED382482` `B3047D4E` `C32C68F9`。
+
+把 C 版这九个实现跑出来的密文与现行九个逐条比对，结果**完全一致**——密钥材料本就是同一批，
+只是数组切分位置不同（例如旧的 `key1` 就是新的 `key[24..47]`），算法取用顺序正好补偿回来。
+所以这里直接复用现有实现，没有再写九套；`LegacyCipherVectorTest` 专门守住这个等价前提，
+一旦不再成立就会立刻失败。
 
 ## 构建
 
@@ -151,12 +176,14 @@ Releases 里的 APK 由固定的发布 key 签名，升级请沿用同一来源�
 ## 测试
 
 ```
-CipherVectorTest   加解密与 C 版逐字节一致（33 条固定向量）
-CctpAlgoIdTest     从 ZSM 交付包的二进制正文里解析 Algo-ID
-CctpParsingTest    重定向 URL 解析、门户配置解析、MD5、随机身份
+CipherVectorTest        Android 算法集与 C 版逐字节一致（33 条固定向量）
+LinuxCipherVectorTest   Linux 算法集与 C 版逐字节一致（18 条固定向量）
+LegacyCipherVectorTest  旧版算法集逐字节一致，并守住"复用现行实现"的等价前提
+CctpAlgoIdTest          从 ZSM 交付包的二进制正文里解析 Algo-ID
+CctpParsingTest         重定向 URL 解析、门户配置解析、MD5、随机身份
 ```
 
-`app/src/test/resources/cipher_vectors.tsv` 是用 C 版算法直接跑出来的密文向量。
+`app/src/test/resources/` 下三份 `cipher_vectors*.tsv` 都是用 C 版算法直接跑出来的密文向量。
 测试里的 IP / MAC / 会话材料都是合成值，不含任何真实抓包数据。
 
 ## 致谢与许可
