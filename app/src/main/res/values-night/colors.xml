@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 Miuix darkColorScheme 的 surface (黑) 对齐 -->
+    <color name="window_background">#FF000000</color>
+</resources>

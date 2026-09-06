@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#FF2E6BE6</color>
+    <!-- 与 Miuix lightColorScheme 的 surface 对齐，避免启动时闪一下白 -->
+    <color name="window_background">#FFF7F7F7</color>
+</resources>

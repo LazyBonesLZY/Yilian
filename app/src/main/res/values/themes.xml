@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  基类用 Theme.DeviceDefault.Light.NoActionBar（API 14+）而不是 .DayNight（API 29+）：
+  后者在 minSdk 26 的机型上不存在，会导致启动即崩。
+  深浅色改由 values-night 资源限定符提供，在所有 API 上都有效。
+-->
+<resources>
+    <style name="Theme.ESurfingClient" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+</resources>

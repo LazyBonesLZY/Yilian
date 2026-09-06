@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  CCTP 门户认证全程走明文 HTTP：探测地址、BAS 重定向、index.cgi/ticket.cgi/auth.cgi
+  都是 http://<IP>:7001 这类地址，且 IP 由 AC 现场下发，无法预先枚举成白名单。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
