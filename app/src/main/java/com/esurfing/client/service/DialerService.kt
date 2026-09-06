@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -44,6 +46,17 @@ class DialerService : Service() {
     private lateinit var wakeLock: WakeLockHolder
     private var sleeper: Sleeper? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    /**
+     * 屏幕点亮 / 解锁时立刻探一次连通性。
+     *
+     * 掉线本身拦不住（账号在别处登录是服务端的决定），但可以让用户碰不上：
+     * 息屏期间被踢，按检测间隔可能要几十秒后才发现，而人拿起手机到真正打开
+     * 网页总要几秒——这几秒足够把重认证跑完。等于把停机时间藏进了掏手机的动作里。
+     *
+     * 这类广播从 Android 8 起不能在清单里静态注册，只能跟着服务的生命周期动态注册。
+     */
+    private var screenReceiver: BroadcastReceiver? = null
 
     /**
      * 本次服务实例是否已经真正启动过拨号循环。
@@ -110,6 +123,7 @@ class DialerService : Service() {
         }
         sleeper = created
         registerNetworkCallback()
+        registerScreenReceiver()
         DialerEngine.start(this, scope, created)
         engineStarted = true
     }
@@ -118,6 +132,7 @@ class DialerService : Service() {
         engineStarted = false
         DialerEngine.stopAndJoin()
         unregisterNetworkCallback()
+        unregisterScreenReceiver()
         sleeper?.shutdown()
         sleeper = null
         wakeLock.release()
@@ -127,6 +142,35 @@ class DialerService : Service() {
      * specialUse 没有时长上限，正常不会走到这里；
      * 万一系统仍然回调，按约定立刻停止，否则进程会被强杀。
      */
+    private fun registerScreenReceiver() {
+        if (screenReceiver != null) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val reason = when (intent?.action) {
+                    Intent.ACTION_USER_PRESENT -> "屏幕已解锁"
+                    Intent.ACTION_SCREEN_ON -> "屏幕点亮"
+                    else -> return
+                }
+                DialerEngine.requestProbe(reason)
+            }
+        }
+        // 两个都收：没设锁屏密码的设备不会有 USER_PRESENT，
+        // 而设了的话 SCREEN_ON 会先到、解锁后 USER_PRESENT 再到一次。
+        // 连着来的重复探测由引擎里的最小间隔挡掉。
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        runCatching { registerReceiver(receiver, filter) }
+            .onSuccess { screenReceiver = receiver }
+            .onFailure { AppLog.error("注册亮屏广播失败: ${it.message}") }
+    }
+
+    private fun unregisterScreenReceiver() {
+        screenReceiver?.let { r -> runCatching { unregisterReceiver(r) } }
+        screenReceiver = null
+    }
+
     override fun onTimeout(startId: Int, fgsType: Int) {
         AppLog.warn("前台服务被系统限时终止 (type=$fgsType), 正在停止")
         scope.launch {
@@ -139,6 +183,7 @@ class DialerService : Service() {
 
     override fun onDestroy() {
         unregisterNetworkCallback()
+        unregisterScreenReceiver()
         // 顺序要紧：先取消协程，被取消的 sleep() 才不会在 finally 里重新抢锁；
         // 之后再 shutdown/release 才能保证锁真的放掉。
         scope.cancel()
@@ -157,11 +202,11 @@ class DialerService : Service() {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                DialerEngine.onNetworkChanged("网络可用")
+                DialerEngine.requestProbe("网络可用")
             }
 
             override fun onLost(network: Network) {
-                DialerEngine.onNetworkChanged("网络断开")
+                DialerEngine.requestProbe("网络断开")
             }
 
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
@@ -169,7 +214,7 @@ class DialerService : Service() {
                 val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
                 val portal = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)
                 if (!validated || portal) {
-                    DialerEngine.onNetworkChanged("联网校验失败或被门户拦截")
+                    DialerEngine.requestProbe("联网校验失败或被门户拦截")
                 }
             }
         }

@@ -114,6 +114,8 @@ if (!hasReleaseSigning) {
 
 dependencies {
     implementation(libs.androidx.activity.compose)
+    // 设置页要在从系统设置返回时重查电池优化状态, 用它的 LocalLifecycleOwner
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.kotlinx.coroutines.android)
     // iOS/macOS 通道的动态 ZSM 模块是 LZMA1 压缩的, Android 平台没有内建解码器
     implementation(libs.xz)

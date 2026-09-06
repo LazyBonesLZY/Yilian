@@ -22,16 +22,21 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -48,8 +53,9 @@ import androidx.compose.ui.unit.sp
 import com.esurfing.client.BuildConfig
 import com.esurfing.client.core.AppLog
 import com.esurfing.client.core.AppSettings
+import com.esurfing.client.core.BatteryOptimization
 import com.esurfing.client.core.Channel
-import com.esurfing.client.core.DetectInterval
+import com.esurfing.client.core.DetectRange
 import com.esurfing.client.core.DialerEngine
 import com.esurfing.client.core.DialerState
 import com.esurfing.client.core.DialerStatus
@@ -58,6 +64,7 @@ import com.esurfing.client.core.LogLevel
 import com.esurfing.client.core.LogStore
 import com.esurfing.client.core.PowerMode
 import com.esurfing.client.core.SettingsStore
+import com.esurfing.client.core.Timing
 import com.esurfing.client.service.DialerService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -82,6 +89,7 @@ import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Report
 import top.yukonga.miuix.kmp.icon.extended.Settings
+import top.yukonga.miuix.kmp.preference.SliderPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.preference.WindowDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -220,7 +228,7 @@ private fun HomePage(
                     Triple("认证通道", settings.channel.label, false),
                     Triple("User-Agent", settings.channel.userAgent, true),
                     Triple("保活策略", settings.powerMode.label, false),
-                    Triple("掉线检测", settings.detectInterval.label, false),
+                    Triple("掉线检测", DetectRange.label(settings.detectIntervalSec), false),
                 ),
             )
         }
@@ -240,7 +248,13 @@ private fun HomePage(
                     add(
                         Triple(
                             "心跳间隔",
-                            if (status.keepInterval > 0) "${status.keepInterval} 秒" else "—",
+                            if (status.keepInterval > 0) {
+                                // 两个数都要给：只显示服务端间隔, 会看不懂日志里为什么提前发
+                                val actual = Timing.beatIntervalMs(status.keepInterval) / 1000
+                                "${status.keepInterval} 秒 (提前到 $actual 秒)"
+                            } else {
+                                "—"
+                            },
                             false,
                         ),
                     )
@@ -487,17 +501,9 @@ private fun SettingsPage(modifier: Modifier, padding: PaddingValues, settings: A
         item { SmallTitle(text = "掉线重连") }
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
-                WindowDropdownPreference(
-                    items = DetectInterval.entries.map { it.label },
-                    selectedIndex = settings.detectInterval.ordinal,
-                    title = "掉线检测间隔",
-                    summary = "每隔这么久探测一次外网, 发现掉线立刻重新认证",
-                    onSelectedIndexChange = {
-                        SettingsStore.update(
-                            settings.copy(detectInterval = DetectInterval.entries[it]),
-                        )
-                    },
-                )
+                DetectIntervalPreference(settings)
+                RowDivider()
+                BatteryExemptionPreference()
             }
         }
         item {
@@ -505,7 +511,7 @@ private fun SettingsPage(modifier: Modifier, padding: PaddingValues, settings: A
                 modifier = Modifier.padding(horizontal = CardPadding, vertical = 8.dp),
                 text = "账号被限制同时在线设备数时, 别的设备一登录本机就会被静默踢下线, " +
                     "此时心跳可能仍然正常, 只有主动探测外网才能发现。间隔越短掉线恢复越快, " +
-                    "耗电也越多。省电优先模式下最快按 45 秒执行。",
+                    "耗电也越多。屏幕点亮时会额外探一次, 所以多数掉线在你拿起手机时就已经修好了。",
                 fontSize = 12.sp,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
@@ -582,6 +588,76 @@ private fun openUrl(context: Context, url: String) {
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     runCatching { context.startActivity(intent) }
         .onFailure { AppLog.warn("打不开链接 $url: ${it.javaClass.simpleName}") }
+}
+
+/**
+ * 掉线检测间隔。用滑块而不是几个固定档位：不同校园网被踢的频率差很多，
+ * 让用户自己在"恢复快"和"省电"之间挑一个点。
+ *
+ * 拖动时只改本地状态，松手才写 SharedPreferences——每移动一格都落盘的话，
+ * 一次拖动会产生几十次写入，还会让拨号循环反复重算到期时间。
+ */
+@Composable
+private fun DetectIntervalPreference(settings: AppSettings) {
+    var dragging by remember { mutableStateOf(false) }
+    var local by remember { mutableIntStateOf(settings.detectIntervalSec) }
+    // 不在拖动时才接受外部变更，否则手指还按着就被 StateFlow 回灌的旧值弹回去
+    if (!dragging && local != settings.detectIntervalSec) local = settings.detectIntervalSec
+
+    val throttled = Timing.isProbeThrottled(local, settings.powerMode)
+    SliderPreference(
+        value = local.toFloat(),
+        onValueChange = {
+            dragging = true
+            local = DetectRange.clamp(it.toInt())
+        },
+        onValueChangeFinished = {
+            dragging = false
+            SettingsStore.update(settings.copy(detectIntervalSec = local))
+        },
+        title = "掉线检测间隔",
+        summary = if (throttled) {
+            // 省电模式会把间隔拖慢, 不说清楚的话用户会以为设置没生效
+            "省电优先下实际按 ${Timing.MIN_PROBE_BATTERY_MS / 1000} 秒执行, 想更快请切到稳定优先"
+        } else {
+            "每隔这么久探测一次外网, 发现掉线立刻重新认证"
+        },
+        valueText = DetectRange.label(local),
+        valueRange = DetectRange.MIN_SEC.toFloat()..DetectRange.MAX_SEC.toFloat(),
+        steps = DetectRange.STEPS,
+    )
+}
+
+/**
+ * 电池优化白名单的状态与入口。
+ *
+ * 状态要在回到本页面时重新查一次：用户是去系统设置里改的，
+ * 改完回来这一行如果还显示旧状态，就等于在骗人。
+ */
+@Composable
+private fun BatteryExemptionPreference() {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var exempt by remember { mutableStateOf(BatteryOptimization.isExempt(context)) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) exempt = BatteryOptimization.isExempt(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    BasicPreferenceRow(
+        title = "忽略电池优化",
+        summary = if (exempt) {
+            "已加入白名单, 息屏后闹钟能按时唤醒"
+        } else {
+            "未加入。息屏后进程会被系统冻住, 心跳可能迟到导致掉线 — 点这里放行"
+        },
+        highlight = !exempt,
+        onClick = { BatteryOptimization.request(context) },
+    )
 }
 
 @Composable

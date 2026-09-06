@@ -154,6 +154,40 @@ fun LinkRow(title: String, url: String, onClick: () -> Unit) {
     }
 }
 
+/**
+ * 标题 + 说明的可点击一行，样子对齐 Miuix 的各种 Preference。
+ * 用在"点了会跳去系统设置"这类没有开关也没有下拉的项上。
+ *
+ * [highlight] 为 true 时说明文字用强调色——这一行存在的意义就是提醒用户去处理，
+ * 处理完了就该退回普通样式，不该一直红着。
+ */
+@Composable
+fun BasicPreferenceRow(
+    title: String,
+    summary: String,
+    onClick: () -> Unit,
+    highlight: Boolean = false,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = CardPadding, vertical = 14.dp),
+    ) {
+        Text(text = title, fontSize = 15.sp)
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = summary,
+            fontSize = 13.sp,
+            color = if (highlight) {
+                MiuixTheme.colorScheme.primary
+            } else {
+                MiuixTheme.colorScheme.onSurfaceVariantSummary
+            },
+        )
+    }
+}
+
 /** 卡片内分隔线，左右留出与内容一致的边距。 */
 @Composable
 fun RowDivider() {

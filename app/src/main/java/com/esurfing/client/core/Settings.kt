@@ -48,17 +48,47 @@ enum class PowerMode(val label: String, val summary: String) {
 }
 
 /**
- * 掉线检测间隔。
+ * 掉线检测间隔的取值范围（秒）。
  *
  * 账号被限制设备数时，别的设备一登录本机就会被 AC 踢下线，而"踢"是静默的：
  * 心跳可能仍然正常，只是流量被重新拦截。只有主动探测外网才能发现，
  * 所以这个间隔决定了"掉线多久后自动重连"。
+ *
+ * 上限 5 分钟：再长就谈不上"检测"了，掉线大半天才发现还不如手动重连。
+ * 下限 10 秒：每次探测都是一个真实 HTTP 请求，更密只是徒增耗电。
  */
-enum class DetectInterval(val label: String, val millis: Long) {
-    SEC_20("20 秒", 20_000L),
-    SEC_45("45 秒", 45_000L),
-    MIN_1("1.5 分钟", 90_000L),
-    MIN_3("3 分钟", 180_000L),
+object DetectRange {
+    const val MIN_SEC = 10
+    const val MAX_SEC = 300
+    const val STEP_SEC = 5
+    const val DEFAULT_SEC = 45
+
+    /** 滑块的离散档位数，Miuix 的 steps 是"两端之间的点数"，所以要减一。 */
+    val STEPS = (MAX_SEC - MIN_SEC) / STEP_SEC - 1
+
+    /** 落到合法范围并对齐步长。用户手改 SharedPreferences 也不会让循环失控。 */
+    fun clamp(sec: Int): Int {
+        val bounded = sec.coerceIn(MIN_SEC, MAX_SEC)
+        val aligned = ((bounded - MIN_SEC + STEP_SEC / 2) / STEP_SEC) * STEP_SEC + MIN_SEC
+        return aligned.coerceIn(MIN_SEC, MAX_SEC)
+    }
+
+    fun label(sec: Int): String = if (sec % 60 == 0 && sec >= 60) {
+        "${sec / 60} 分钟"
+    } else if (sec > 60) {
+        "${sec / 60} 分 ${sec % 60} 秒"
+    } else {
+        "$sec 秒"
+    }
+
+    /** 1.2.0 及以前是四档枚举，升级上来时把旧值映射成秒。 */
+    fun fromLegacyName(name: String?): Int = when (name) {
+        "SEC_20" -> 20
+        "SEC_45" -> 45
+        "MIN_1" -> 90
+        "MIN_3" -> 180
+        else -> DEFAULT_SEC
+    }
 }
 
 data class AppSettings(
@@ -68,7 +98,8 @@ data class AppSettings(
     val autoStart: Boolean = false,
     val bindWifi: Boolean = true,
     val powerMode: PowerMode = PowerMode.BATTERY,
-    val detectInterval: DetectInterval = DetectInterval.SEC_45,
+    /** 掉线检测间隔，秒。合法范围见 [DetectRange]。 */
+    val detectIntervalSec: Int = DetectRange.DEFAULT_SEC,
     val logLevel: LogLevel = LogLevel.INFO,
     val logToFile: Boolean = true,
 )
@@ -83,7 +114,9 @@ object SettingsStore {
     private const val KEY_AUTO_START = "auto_start"
     private const val KEY_BIND_WIFI = "bind_wifi"
     private const val KEY_POWER_MODE = "power_mode"
-    private const val KEY_DETECT_INTERVAL = "detect_interval"
+    /** 1.2.0 及以前的四档枚举，只在迁移时读一次。 */
+    private const val KEY_DETECT_INTERVAL_LEGACY = "detect_interval"
+    private const val KEY_DETECT_INTERVAL_SEC = "detect_interval_sec"
     private const val KEY_LOG_LEVEL = "log_level"
     private const val KEY_LOG_TO_FILE = "log_to_file"
 
@@ -108,11 +141,14 @@ object SettingsStore {
             powerMode = runCatching {
                 PowerMode.valueOf(prefs.getString(KEY_POWER_MODE, PowerMode.BATTERY.name)!!)
             }.getOrDefault(PowerMode.BATTERY),
-            detectInterval = runCatching {
-                DetectInterval.valueOf(
-                    prefs.getString(KEY_DETECT_INTERVAL, DetectInterval.SEC_45.name)!!,
-                )
-            }.getOrDefault(DetectInterval.SEC_45),
+            detectIntervalSec = DetectRange.clamp(
+                if (prefs.contains(KEY_DETECT_INTERVAL_SEC)) {
+                    prefs.getInt(KEY_DETECT_INTERVAL_SEC, DetectRange.DEFAULT_SEC)
+                } else {
+                    // 从旧版本升级上来：把四档枚举换算成秒，不要让用户的选择被默认值覆盖
+                    DetectRange.fromLegacyName(prefs.getString(KEY_DETECT_INTERVAL_LEGACY, null))
+                },
+            ),
             logLevel = runCatching {
                 LogLevel.valueOf(prefs.getString(KEY_LOG_LEVEL, LogLevel.INFO.name)!!)
             }.getOrDefault(LogLevel.INFO),
@@ -134,7 +170,7 @@ object SettingsStore {
             putBoolean(KEY_AUTO_START, settings.autoStart)
             putBoolean(KEY_BIND_WIFI, settings.bindWifi)
             putString(KEY_POWER_MODE, settings.powerMode.name)
-            putString(KEY_DETECT_INTERVAL, settings.detectInterval.name)
+            putInt(KEY_DETECT_INTERVAL_SEC, DetectRange.clamp(settings.detectIntervalSec))
             putString(KEY_LOG_LEVEL, settings.logLevel.name)
             putBoolean(KEY_LOG_TO_FILE, settings.logToFile)
         }.apply()

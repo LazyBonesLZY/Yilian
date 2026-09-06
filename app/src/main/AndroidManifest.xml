@@ -9,6 +9,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
+      防掉线的关键: 不进电池优化白名单, 息屏后进程会被 Doze 冻住,
+      非精确闹钟迟到几分钟, 心跳错过服务端截止时间 -> 会话被回收。
+      只用来拉起系统那个授权弹窗, 用户可以拒绝, 拒绝了应用照常工作。
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="false"

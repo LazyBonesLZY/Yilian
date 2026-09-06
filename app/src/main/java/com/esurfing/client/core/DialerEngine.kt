@@ -54,25 +54,12 @@ data class DialerStatus(
  *
  * 等待通过注入的 [Sleeper] 完成，因此本类不关心 WakeLock / 闹钟这些细节。
  * 已认证后不做周期性 HTTP 探测——心跳本身就是活性检查，网络变化由
- * [onNetworkChanged] 事件驱动，这样一天的请求数从八万降到几十。
+ * [requestProbe] 事件驱动，这样一天的请求数从八万降到几十。
  */
 object DialerEngine {
 
     /** 认证超过 1 天 23 小时 50 分后主动重新认证，避免被服务端踢下线。 */
     private const val REAUTH_AFTER_MS = 172_200_000L
-
-    /** 服务端没给 keep-retry 时的心跳兜底间隔。 */
-    private const val FALLBACK_BEAT_MS = 10 * 60_000L
-
-    /** 心跳间隔下限，防止服务端下发异常小的值导致疯狂发包。 */
-    private const val MIN_BEAT_MS = 10_000L
-
-    /**
-     * 省电优先模式下的探测间隔下限。
-     * 每次探测都要把设备从 Doze 里唤醒，所以即使用户选了 20 秒，
-     * 省电模式也按 45 秒执行——想要更快就切到稳定优先。
-     */
-    private const val MIN_PROBE_BATTERY_MS = 45_000L
 
     /** 单次等待的下限，避免算出 0 之后打成紧循环。 */
     private const val MIN_SLEEP_MS = 500L
@@ -91,7 +78,7 @@ object DialerEngine {
 
     /**
      * 已联网但没有我们建立的会话时的复查间隔。
-     * 可以放得很宽，因为网络变化由 [onNetworkChanged] 事件驱动，不靠这个轮询发现。
+     * 可以放得很宽，因为网络变化由 [requestProbe] 事件驱动，不靠这个轮询发现。
      */
     private const val IDLE_RECHECK_MS = 5 * 60_000L
 
@@ -154,6 +141,12 @@ object DialerEngine {
     private var beatFailures = 0
 
     /**
+     * 上一次心跳失败是不是"服务端明确拒绝"（而非网络不通）。
+     * 两者的正确反应不同：前者重试无意义，后者值得等一等。
+     */
+    private var sessionRejected = false
+
+    /**
      * 掉线自动重连的统计，只在 [start] 时清零：
      * 会话本身会被 [resetSession] 反复重建，这两个字段要跨会话保留，
      * 否则界面上永远显示 0，用户就看不出"到底被踢了几次"。
@@ -206,13 +199,16 @@ object DialerEngine {
     }
 
     /**
-     * 网络状态发生变化（Wi-Fi 上线/掉线、门户拦截状态改变）。
-     * 置位强制探测标记再唤醒循环——只唤醒是不够的，
-     * 循环醒来后如果发现心跳还没到期就会接着睡，那这次事件等于白来。
+     * 请求立刻探一次连通性（网络变化、屏幕解锁等）。
+     *
+     * 置位标记再唤醒循环——只唤醒是不够的，循环醒来后如果发现心跳还没到期
+     * 就会接着睡，那这次事件等于白来。
+     *
+     * 太密的请求由 [Timing.MIN_FORCED_PROBE_GAP_MS] 在循环里挡掉。
      */
-    fun onNetworkChanged(reason: String) {
+    fun requestProbe(reason: String) {
         if (!isRunning) return
-        AppLog.debug("网络变化: $reason")
+        AppLog.debug("请求探测: $reason")
         forceProbe = true
         sleeper?.wake()
     }
@@ -328,8 +324,10 @@ object DialerEngine {
         // 到期时间由"上次探测时刻 + 当前间隔"实时算出，而不是探完就固化下来：
         // 用户把间隔从 3 分钟改成 20 秒时，改动下一轮就生效，不用等旧的 3 分钟走完。
         nextProbeElapsed = lastProbeElapsed + probeIntervalMs(settings)
-        val forced = forceProbe
-        if (forced) forceProbe = false
+        // 刚探过就别再探：网络变化和屏幕解锁常常连着来，否则会连发一串同样的请求
+        val forced = forceProbe &&
+            now - lastProbeElapsed >= Timing.MIN_FORCED_PROBE_GAP_MS
+        if (forceProbe) forceProbe = false
         if (forced || now >= nextProbeElapsed) {
             lastProbeElapsed = SystemClock.elapsedRealtime()
             nextProbeElapsed = lastProbeElapsed + probeIntervalMs(settings)
@@ -347,6 +345,14 @@ object DialerEngine {
             if (heartbeat(settings)) {
                 beatFailures = 0
                 nextBeatElapsed = SystemClock.elapsedRealtime() + beatIntervalMs()
+            } else if (sessionRejected) {
+                // 服务端明确说了这个会话不认（错误码 / 缺 interval），不是网络抖动。
+                // 再重试两次也只是白等 10 秒，直接重认证。
+                noteDrop("服务端已拒绝该会话, 立刻重新认证")
+                beatFailures = 0
+                sessionRejected = false
+                resetSession()
+                return 0
             } else {
                 beatFailures++
                 publish(
@@ -371,27 +377,11 @@ object DialerEngine {
         return (next - SystemClock.elapsedRealtime()).coerceAtLeast(MIN_SLEEP_MS)
     }
 
-    /**
-     * 连通性探测间隔，由设置里的"掉线检测间隔"决定。
-     * 稳定优先模式本来就一直持锁，用户选多快就多快；
-     * 省电模式下每次探测都要唤醒设备，所以有个 [MIN_PROBE_BATTERY_MS] 下限。
-     */
-    private fun probeIntervalMs(settings: AppSettings): Long {
-        val wanted = settings.detectInterval.millis
-        return when (settings.powerMode) {
-            PowerMode.STABILITY -> wanted
-            PowerMode.BATTERY -> wanted.coerceAtLeast(MIN_PROBE_BATTERY_MS)
-        }
-    }
+    private fun probeIntervalMs(settings: AppSettings): Long =
+        Timing.probeIntervalMs(settings.detectIntervalSec, settings.powerMode)
 
-    /**
-     * 心跳间隔由服务端下发，这里加个下限：万一收到 0 或 1 秒之类的值，
-     * 循环会退化成疯狂发包。上限交给 [MAX_SLEEP_SLICE_MS] 分片处理。
-     */
-    private fun beatIntervalMs(): Long {
-        val fromServer = if (keepInterval > 0) keepInterval * 1000 else FALLBACK_BEAT_MS
-        return fromServer.coerceAtLeast(MIN_BEAT_MS)
-    }
+    /** 比服务端给的间隔早一点发，理由见 [Timing.beatIntervalMs]。 */
+    private fun beatIntervalMs(): Long = Timing.beatIntervalMs(keepInterval)
 
     /**
      * 探测是否被门户拦截。
@@ -620,6 +610,7 @@ object DialerEngine {
      * 这里保持一致——否则会话早被服务端回收了，客户端还以为一切正常。
      */
     private fun heartbeat(settings: AppSettings): Boolean {
+        sessionRejected = false
         val session = cipher ?: return false
         if (keepUrl.isEmpty()) return false
         val ua = settings.channel.userAgent
@@ -640,16 +631,20 @@ object DialerEngine {
             val code = Cctp.errorCode(xml)
             val reason = CctpErrors.describe(code.orEmpty()) ?: Cctp.tagValue(xml, "reason")
             AppLog.error("心跳被拒绝: code=$code${reason?.let { ", $it" } ?: ""}")
+            sessionRejected = true
             return false
         }
 
         val interval = Cctp.heartbeatInterval(xml) ?: run {
             AppLog.error("心跳响应缺少 interval, 视为会话已失效")
+            sessionRejected = true
             return false
         }
         keepInterval = interval
         lastBeat = System.currentTimeMillis()
-        AppLog.info("心跳完成, 下一次: $keepInterval 秒后")
+        // 日志里把"服务端要求"和"我们实际安排"都写出来：只写一个数, 以后排查
+        // "为什么心跳比 interval 密"时会以为是 bug
+        AppLog.info("心跳完成, 服务端间隔 $keepInterval 秒, 下一次 ${beatIntervalMs() / 1000} 秒后")
         publish(DialerState.ONLINE, "已认证登录")
         return true
     }
@@ -769,6 +764,7 @@ object DialerEngine {
         lastProbeElapsed = 0
         forceProbe = false
         beatFailures = 0
+        sessionRejected = false
         portalHeaders.reset()
         // 主机名/ostag 跟着当前通道走：iOS/macOS 要一直报成真机的样子，
         // 换身份时不能退回随机 hex, 否则服务端会看到"iPhone 突然改名"。

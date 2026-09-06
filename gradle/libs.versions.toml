@@ -3,6 +3,7 @@ agp = "8.13.2"
 kotlin = "2.4.0"
 miuix = "0.9.2"
 androidx-activity = "1.13.0"
+androidx-lifecycle = "2.9.4"
 coroutines = "1.10.2"
 junit = "4.13.2"
 xz = "1.10"
@@ -12,6 +13,7 @@ miuix-ui = { module = "top.yukonga.miuix.kmp:miuix-ui-android", version.ref = "m
 miuix-preference = { module = "top.yukonga.miuix.kmp:miuix-preference-android", version.ref = "miuix" }
 miuix-icons = { module = "top.yukonga.miuix.kmp:miuix-icons-android", version.ref = "miuix" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 xz = { module = "org.tukaani:xz", version.ref = "xz" }
 junit = { module = "junit:junit", version.ref = "junit" }

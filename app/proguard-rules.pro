@@ -6,7 +6,6 @@
 -keepclassmembers enum com.esurfing.client.core.Channel { <fields>; }
 -keepclassmembers enum com.esurfing.client.core.PowerMode { <fields>; }
 -keepclassmembers enum com.esurfing.client.core.LogLevel { <fields>; }
--keepclassmembers enum com.esurfing.client.core.DetectInterval { <fields>; }
 
 -keepclassmembers enum * {
     public static **[] values();
