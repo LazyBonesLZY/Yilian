@@ -3,14 +3,17 @@
 天翼校园网（CCTP 门户）的 Android 认证客户端。后台常驻拨号、掉线自动重连，界面用
 [Miuix](https://github.com/compose-miuix-ui/miuix) 写的 Jetpack Compose。
 
-协议流程与九套会话算法移植自
-[ESurfingClient-CVersion](https://github.com/BadGhost520/ESurfingClient-CVersion)，
+协议流程与全部会话算法移植自
+[BadGhost520/ESurfingClient-CVersion](https://github.com/BadGhost520/ESurfingClient-CVersion)，
 纯 Kotlin 实现，没有 native 依赖。
 
-> **不包含防共享检测（excheck）**：C 版里的 `excheck-args` / `sproof` / `shared` 相关流程整体未移植。
+> **不包含防共享检测（excheck）**。上游 C 版本身也没有这一块——全仓库搜不到
+> `excheck` / `sproof` 相关代码，那套流程在更早的 Rsplwe Kotlin 客户端里。本项目同样不会加。
 
 | | |
 |---|---|
+| 项目地址 | <https://github.com/LazyBonesLZY/Yilian> |
+| 上游 C 版 | <https://github.com/BadGhost520/ESurfingClient-CVersion> |
 | 认证通道 | Android / Linux / Windows / iOS / macOS |
 | 最低系统 | Android 8.0（API 26） |
 | 包名 | `com.esurfing.client` |
