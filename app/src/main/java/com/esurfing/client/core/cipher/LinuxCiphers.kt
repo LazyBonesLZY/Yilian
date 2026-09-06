@@ -69,19 +69,29 @@ internal class AesEcbDoubleLinuxCipher(key1: ByteArray, key2: ByteArray) : Sessi
 }
 
 /**
- * 45433DCF-9ECA-4BE5-83F2-F92BA0B4F291：双层 AES-128-CBC（Linux）。
+ * 45433DCF-9ECA-4BE5-83F2-F92BA0B4F291（Linux）与 066474E5-…（Windows）：
+ * 双层 AES-128-CBC。
  *
- * 两层的 IV 都是全零，而且每层都把 IV 原样拼在密文前面——所以密文比明文多 32 字节，
- * 开头固定是 32 个 0。这看着很像 bug，但 C 版就是这么发的，服务端也这么收，
- * 照抄即可，不要"优化"掉。
+ * 两层用同一个 IV，而且每层都把 IV 原样拼在密文前面——所以密文比明文多 32 字节。
+ * 45433DCF 的 IV 是全零，密文开头就是 32 个 0；这看着很像 bug，但 C 版就是这么发的、
+ * 服务端也这么收，照抄即可，不要"优化"掉。
+ *
+ * 注：上游 PR #37 把 IV 改成参数时漏掉了写前缀那两行 memcpy，留下了未初始化的
+ * 堆内存（每次运行前 16 字节都不一样，连原本正常的 45433DCF 也被带坏）。
+ * 这里按改动前的语义实现：前缀 = IV。已验证 IV 全零时与既有向量逐字节一致。
  */
-internal class AesCbcDoubleLinuxCipher(key1: ByteArray, key2: ByteArray) : SessionCipher {
+internal class AesCbcDoubleLinuxCipher(
+    key1: ByteArray,
+    key2: ByteArray,
+    iv: ByteArray = ByteArray(16),
+) : SessionCipher {
 
     private val rk1 = StdAesCore.expandKey(key1)
     private val rk2 = StdAesCore.expandKey(key2)
+    private val iv = iv.copyOf(16)
 
     private fun cbcEncrypt(input: ByteArray, output: ByteArray, outOff: Int, rk: IntArray) {
-        val prev = ByteArray(16)
+        val prev = iv.copyOf()
         val x = ByteArray(16)
         var i = 0
         while (i < input.size) {
@@ -92,8 +102,15 @@ internal class AesCbcDoubleLinuxCipher(key1: ByteArray, key2: ByteArray) : Sessi
         }
     }
 
-    private fun cbcDecrypt(input: ByteArray, inOff: Int, len: Int, output: ByteArray, rk: IntArray) {
-        val prev = ByteArray(16)
+    private fun cbcDecrypt(
+        input: ByteArray,
+        inOff: Int,
+        len: Int,
+        output: ByteArray,
+        rk: IntArray,
+        ivBlock: ByteArray,
+    ) {
+        val prev = ivBlock.copyOf(16)
         val x = ByteArray(16)
         var i = 0
         while (i < len) {
@@ -107,8 +124,10 @@ internal class AesCbcDoubleLinuxCipher(key1: ByteArray, key2: ByteArray) : Sessi
     override fun encrypt(text: String): String {
         val padded = zeroPad(text.toByteArray(Charsets.UTF_8), 16)
         val stage1 = ByteArray(16 + padded.size)
+        iv.copyInto(stage1)
         cbcEncrypt(padded, stage1, 16, rk1)
         val stage2 = ByteArray(16 + stage1.size)
+        iv.copyInto(stage2)
         cbcEncrypt(stage1, stage2, 16, rk2)
         return stage2.toHexUpper()
     }
@@ -117,11 +136,12 @@ internal class AesCbcDoubleLinuxCipher(key1: ByteArray, key2: ByteArray) : Sessi
         val data = hex.hexToBytesOrNull() ?: return null
         // 至少要有两层各自的 IV 块
         if (data.size < 32 || data.size % 16 != 0) return null
+        // 每层的 IV 取自密文前缀（与 C 版一致），而不是直接用 ctx 里的那份
         val stage1 = ByteArray(data.size - 16)
-        cbcDecrypt(data, 16, stage1.size, stage1, rk2)
+        cbcDecrypt(data, 16, stage1.size, stage1, rk2, data)
         if (stage1.size < 32) return null
         val out = ByteArray(stage1.size - 16)
-        cbcDecrypt(stage1, 16, out.size, out, rk1)
+        cbcDecrypt(stage1, 16, out.size, out, rk1, stage1)
         return out.stripZeroTailToString()
     }
 }

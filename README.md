@@ -20,7 +20,7 @@
 ## 功能
 
 - 完整 CCTP 认证流程：探测 → 跟随 BAS 重定向取门户配置 → 初始化会话取 Algo-ID → 取 ticket → 登录 → 心跳 → 登出
-- **C 版 24 个 Algo-ID 全部覆盖**（Android 9 + Linux 6 + 旧版 9），与 C 版逐字节一致，纯 Kotlin 实现无 native 依赖
+- **34 个 Algo-ID 全部覆盖**（C 版 24 个 + 上游 PR #37 的 10 个 Windows 系），与 C 版逐字节一致，纯 Kotlin 实现无 native 依赖
 - 前台服务常驻，可选开机自启
 - **掉线检测与自动重连**：账号被限制多设备时会被静默踢下线，本客户端会主动发现并重新认证
 - 两档保活策略，在省电与及时性之间取舍
@@ -109,7 +109,7 @@ AC 的 IP 由现场下发、无法预先枚举，所以没法收窄成域名白�
 
 ## 支持的 Algo-ID
 
-C 版的 **24 个 Algo-ID 已全部覆盖**，服务端下发哪一个都能认。
+C 版的 **24 个 Algo-ID 已全部覆盖**，另含上游 PR #37 的 10 个 Windows 系 ID，共 **34 个**，服务端下发哪一个都能认。
 
 ### 现行 Android 算法集
 
@@ -136,6 +136,28 @@ Algo-ID 由 AC 下发，与客户端跑在什么系统上无关，所以 Android
 这一族与 Android 那族看着像，细节处处不同：AES 用标准密钥扩展而非改版的、XTEA 的
 delta 是正的、AES-CBC 还会把每层的全零 IV 拼进密文（密文因此比明文多 32 字节，
 开头固定 32 个 0）。最后这条看着像 bug，但 C 版就是这么发的、服务端也这么收，照抄未改。
+
+### Windows 系算法集
+
+来自上游 [PR #37](https://github.com/BadGhost520/ESurfingClient-CVersion/pull/37)（尚未合并的草稿）。
+
+| Algo-ID | 算法 |
+|---|---|
+| 03F8A638-… / 079637D7-… / 0A2375CB-… / 11734889-… / CF750526-… / FC05D786-… | 三层 XTEA-CBC |
+| 066474E5-… | 双层 AES-128-CBC |
+| 083B005A-… / 08BDB042-… | 双层 AES-128-ECB |
+| 054DDD03-… | 双重 3DES-CBC |
+
+只有三层 XTEA-CBC 是新算法，其余四个复用 Linux 族实现、只换密钥与 IV。
+
+> **移植时改了两处**：该 PR 把双层 AES-CBC 的 IV 从常量改成参数，但
+> (1) 构造函数收下 `iv` 却从没存进 ctx，`s_calloc` 之后它一直是全零；
+> (2) 删掉了往密文前缀写 IV 的两行 `memcpy`，而缓冲区是 `malloc` 的，
+> 于是前 16 字节变成未初始化堆内存——每次运行都不一样，连原本正常的 45433DCF 也被带坏。
+>
+> 本项目按改动前的语义实现（前缀 = IV，IV 真正生效），并以此重新生成参考向量。
+> IV 全零时与既有 45433DCF 向量逐字节一致，可以确认这就是原本的语义。
+> `WindowsCipherVectorTest.aesCbcPrefixIsIvAndDeterministic` 专门盯着这两点。
 
 ### 旧版 Android 算法集
 
@@ -178,12 +200,13 @@ Releases 里的 APK 由固定的发布 key 签名，升级请沿用同一来源�
 ```
 CipherVectorTest        Android 算法集与 C 版逐字节一致（33 条固定向量）
 LinuxCipherVectorTest   Linux 算法集与 C 版逐字节一致（18 条固定向量）
+WindowsCipherVectorTest Windows 算法集逐字节一致，并盯住 AES-CBC 的 IV 前缀与确定性（30 条）
 LegacyCipherVectorTest  旧版算法集逐字节一致，并守住"复用现行实现"的等价前提
 CctpAlgoIdTest          从 ZSM 交付包的二进制正文里解析 Algo-ID
 CctpParsingTest         重定向 URL 解析、门户配置解析、MD5、随机身份
 ```
 
-`app/src/test/resources/` 下三份 `cipher_vectors*.tsv` 都是用 C 版算法直接跑出来的密文向量。
+`app/src/test/resources/` 下四份 `cipher_vectors*.tsv` 都是用 C 版算法直接跑出来的密文向量。
 测试里的 IP / MAC / 会话材料都是合成值，不含任何真实抓包数据。
 
 ## 致谢与许可

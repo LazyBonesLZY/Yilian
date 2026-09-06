@@ -102,6 +102,47 @@ object CipherFactory {
         "C32C68F9-CA81-4260-A329-BBAFD1A9CCD1" ->
             TeaTripleCbcCipher(KeyData.KEY_TEA_CBC, KeyData.IV_TEA_CBC)
 
+        // ---- Windows 系算法集（上游 PR #37）----
+        // 只有三层 XTEA-CBC 是新算法，其余复用 Linux 族的实现，只换密钥/IV。
+
+        "03F8A638-5C23-418B-972C-A2BA6927EF77" ->
+            XteaTripleCbcWindowsCipher(KeyData.KEY_WIN_03F8A638, KeyData.IV_WIN_03F8A638)
+
+        "079637D7-A2A2-41CE-A50D-4CAD3B2334E7" ->
+            XteaTripleCbcWindowsCipher(KeyData.KEY_WIN_079637D7, KeyData.IV_WIN_079637D7)
+
+        "0A2375CB-1F91-4064-B00F-1CF3A1AF6E4A" ->
+            XteaTripleCbcWindowsCipher(KeyData.KEY_WIN_0A2375CB, KeyData.IV_WIN_0A2375CB)
+
+        "11734889-14D8-48FA-ACEC-36452CA3FE8D" ->
+            XteaTripleCbcWindowsCipher(KeyData.KEY_WIN_11734889, KeyData.IV_WIN_11734889)
+
+        "CF750526-3D99-44BE-A0DE-09DEADC97D52" ->
+            XteaTripleCbcWindowsCipher(KeyData.KEY_WIN_CF750526, KeyData.IV_WIN_CF750526)
+
+        "FC05D786-59A7-4469-B276-0D9B89EAD057" ->
+            XteaTripleCbcWindowsCipher(KeyData.KEY_WIN_FC05D786, KeyData.IV_WIN_FC05D786)
+
+        "054DDD03-911E-49F5-89D6-EFBF5055FBFF" ->
+            DesEdeDoubleCbcCipher(
+                KeyData.KEY_WIN_054DDD03,
+                KeyData.IV_WIN_054DDD03,
+                KeyData.IV_WIN_054DDD03,
+            )
+
+        "066474E5-503E-4B82-98C4-DF4483DAF0B5" ->
+            AesCbcDoubleLinuxCipher(
+                KeyData.KEY_WIN_066474E5_1,
+                KeyData.KEY_WIN_066474E5_2,
+                KeyData.IV_WIN_066474E5,
+            )
+
+        "083B005A-7ACA-419A-AC00-6929C0AADB55" ->
+            AesEcbDoubleLinuxCipher(KeyData.KEY_WIN_083B005A_1, KeyData.KEY_WIN_083B005A_2)
+
+        "08BDB042-5D25-4397-875F-357E9F7700C8" ->
+            AesEcbDoubleLinuxCipher(KeyData.KEY_WIN_08BDB042_1, KeyData.KEY_WIN_08BDB042_2)
+
         else -> {
             AppLog.error("不支持的 Algo-ID: $algoId")
             null
