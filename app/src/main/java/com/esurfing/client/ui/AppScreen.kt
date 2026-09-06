@@ -3,6 +3,8 @@ package com.esurfing.client.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +28,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,10 +55,14 @@ import com.esurfing.client.core.DialerState
 import com.esurfing.client.core.DialerStatus
 import com.esurfing.client.core.LogEntry
 import com.esurfing.client.core.LogLevel
+import com.esurfing.client.core.LogStore
 import com.esurfing.client.core.PowerMode
 import com.esurfing.client.core.SettingsStore
 import com.esurfing.client.service.DialerService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -223,6 +231,10 @@ private fun HomePage(
                 buildList {
                     add(Triple("本机 IP", status.clientIp.ifBlank { "—" }, true))
                     add(Triple("AC IP", status.acIp.ifBlank { "—" }, true))
+                    // 没取到就不占一行：它对拨号没有任何影响，只是个认网段的参考
+                    if (status.schoolSymbol.isNotEmpty()) {
+                        add(Triple("校园网标志", status.schoolSymbol, true))
+                    }
                     add(Triple("Algo-ID", status.algoId.ifBlank { "—" }, true))
                     add(Triple("Ticket", status.ticket.ifBlank { "—" }, true))
                     add(
@@ -263,6 +275,25 @@ private fun WarningBanner(text: String) {
 private fun LogPage(modifier: Modifier, padding: PaddingValues) {
     val entries by AppLog.entries.collectAsState()
     val shown = remember(entries) { entries.asReversed() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // 用系统的"保存文件"而不是 FileProvider 分享：不需要在清单里配 provider，
+    // 用户自己挑存哪儿，也不会把日志遗留在共享目录里。
+    val exporter = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use { LogStore.exportTo(it) } ?: 0L
+                }
+            }
+            bytes.onSuccess { AppLog.info("日志已导出 ($it 字节)") }
+                .onFailure { AppLog.error("导出日志失败: ${it.javaClass.simpleName}") }
+        }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -284,12 +315,21 @@ private fun LogPage(modifier: Modifier, padding: PaddingValues) {
                     fontSize = 13.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
-                TextButton(
-                    text = "清空",
-                    onClick = { AppLog.clear() },
-                    minWidth = 64.dp,
-                    minHeight = 34.dp,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(
+                        text = "导出",
+                        onClick = { exporter.launch("yilian-${logFileStamp()}.log") },
+                        minWidth = 64.dp,
+                        minHeight = 34.dp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(
+                        text = "清空",
+                        onClick = { AppLog.clear() },
+                        minWidth = 64.dp,
+                        minHeight = 34.dp,
+                    )
+                }
             }
         }
 
@@ -483,7 +523,31 @@ private fun SettingsPage(modifier: Modifier, padding: PaddingValues, settings: A
                         SettingsStore.update(settings.copy(logLevel = LogLevel.entries[it]))
                     },
                 )
+                RowDivider()
+                // 大小只在进页时算一次，不必跟着每行日志刷
+                val logSize by produceState(0L) {
+                    value = withContext(Dispatchers.IO) { LogStore.sizeBytes() }
+                }
+                SwitchPreference(
+                    checked = settings.logToFile,
+                    onCheckedChange = { SettingsStore.update(settings.copy(logToFile = it)) },
+                    title = "记到文件",
+                    summary = if (logSize > 0) {
+                        "当前已占用 ${logSize / 1024} KB, 可在日志页导出"
+                    } else {
+                        "写到应用私有目录, 可在日志页导出"
+                    },
+                )
             }
+        }
+        item {
+            Text(
+                modifier = Modifier.padding(horizontal = CardPadding, vertical = 8.dp),
+                text = "界面上只留最近 800 条日志, 进程被系统杀掉就没了。" +
+                    "记到文件后每万行轮转一次, 最多保留四份; 日志页的清空按钮会连文件一起删。",
+                fontSize = 12.sp,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
         }
 
         item { SmallTitle(text = "关于") }
@@ -583,6 +647,12 @@ private fun relativeTime(timeMs: Long, nowMs: Long): String {
         delta < 3600 -> "${delta / 60} 分钟前"
         else -> "${delta / 3600} 小时前"
     }
+}
+
+/** 导出文件名用的时间戳，不带冒号——部分文件系统不收。 */
+private fun logFileStamp(): String {
+    val fmt = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+    return fmt.format(java.util.Date())
 }
 
 private fun absoluteTime(timeMs: Long): String {

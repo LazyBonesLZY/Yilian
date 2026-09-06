@@ -70,6 +70,7 @@ data class AppSettings(
     val powerMode: PowerMode = PowerMode.BATTERY,
     val detectInterval: DetectInterval = DetectInterval.SEC_45,
     val logLevel: LogLevel = LogLevel.INFO,
+    val logToFile: Boolean = true,
 )
 
 /** SharedPreferences 持久化的全局配置。 */
@@ -84,6 +85,7 @@ object SettingsStore {
     private const val KEY_POWER_MODE = "power_mode"
     private const val KEY_DETECT_INTERVAL = "detect_interval"
     private const val KEY_LOG_LEVEL = "log_level"
+    private const val KEY_LOG_TO_FILE = "log_to_file"
 
     private lateinit var appContext: Context
 
@@ -93,6 +95,7 @@ object SettingsStore {
     fun init(context: Context) {
         if (::appContext.isInitialized) return
         appContext = context.applicationContext
+        LogStore.init(appContext)
         val prefs = appContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
         val loaded = AppSettings(
             username = prefs.getString(KEY_USERNAME, "").orEmpty(),
@@ -113,14 +116,17 @@ object SettingsStore {
             logLevel = runCatching {
                 LogLevel.valueOf(prefs.getString(KEY_LOG_LEVEL, LogLevel.INFO.name)!!)
             }.getOrDefault(LogLevel.INFO),
+            logToFile = prefs.getBoolean(KEY_LOG_TO_FILE, true),
         )
         _settings.value = loaded
         AppLog.minLevel = loaded.logLevel
+        LogStore.enabled = loaded.logToFile
     }
 
     fun update(settings: AppSettings) {
         _settings.value = settings
         AppLog.minLevel = settings.logLevel
+        LogStore.enabled = settings.logToFile
         appContext.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().apply {
             putString(KEY_USERNAME, settings.username)
             putString(KEY_PASSWORD, settings.password)
@@ -130,6 +136,7 @@ object SettingsStore {
             putString(KEY_POWER_MODE, settings.powerMode.name)
             putString(KEY_DETECT_INTERVAL, settings.detectInterval.name)
             putString(KEY_LOG_LEVEL, settings.logLevel.name)
+            putBoolean(KEY_LOG_TO_FILE, settings.logToFile)
         }.apply()
     }
 }

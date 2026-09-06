@@ -211,6 +211,27 @@ class CctpParsingTest {
         assertEquals(false, Cctp.looksLikePortalPage(null))
     }
 
+    // ---- 校园网标志 ----
+
+    /** 对应 C 版 get_school_ip_symbol()：取 wlanuserip 的前两段。 */
+    @Test
+    fun extractsSchoolSymbolFromClientIp() {
+        assertEquals("10.23", Cctp.schoolSymbol("10.23.45.67"))
+        assertEquals("192.168", Cctp.schoolSymbol("192.168.1.2"))
+        assertEquals("255.255", Cctp.schoolSymbol("255.255.255.255"))
+    }
+
+    /** 取不到时必须返回 null，而不是拿半截的东西当标志。 */
+    @Test
+    fun rejectsMalformedClientIp() {
+        assertNull("只有一段", Cctp.schoolSymbol("10"))
+        assertNull("只有一个点", Cctp.schoolSymbol("10.23"))
+        assertNull("空串", Cctp.schoolSymbol(""))
+        assertNull(Cctp.schoolSymbol(null))
+        // 长度上限跟 C 版 SCHOOL_NETWORK_SYMBOL(8) 的缓冲一致
+        assertNull("前两段超过缓冲", Cctp.schoolSymbol("1234.5678.1.1"))
+    }
+
     // ---- 错误码 ----
 
     @Test

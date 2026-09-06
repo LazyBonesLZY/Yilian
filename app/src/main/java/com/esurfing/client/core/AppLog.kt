@@ -20,7 +20,7 @@ enum class LogLevel(val label: String) {
 /** [id] 单调递增，作为 Compose lazy list 的稳定 key。 */
 data class LogEntry(val id: Long, val time: String, val level: LogLevel, val message: String)
 
-/** 内存日志环形缓冲，同时转发到 logcat。 */
+/** 内存日志环形缓冲，同时转发到 logcat 与日志文件。 */
 object AppLog {
 
     private const val TAG = "ESurfing"
@@ -52,6 +52,7 @@ object AppLog {
             LogLevel.DEBUG -> Log.d(TAG, message)
             LogLevel.VERBOSE -> Log.v(TAG, message)
         }
+        LogStore.append(level, message)
         // 引擎线程与界面线程都会写，必须用 update 做原子的读-改-写，
         // 直接给 value 赋值会在并发时丢日志
         _entries.update { current ->
@@ -60,7 +61,9 @@ object AppLog {
         }
     }
 
+    /** 清空内存缓冲，并把日志文件一起删掉。 */
     fun clear() {
         _entries.value = emptyList()
+        LogStore.clear()
     }
 }

@@ -203,6 +203,23 @@ object Cctp {
     }
 
     /** 把 Location 头的相对地址补全成绝对地址（对应 C 版 resolve_url）。 */
+    /**
+     * 校园网标志 = wlanuserip 的前两段（如 `10.23`），对应 C 版 get_school_ip_symbol()。
+     *
+     * 纯展示用：C 版把它放进 web UI 的状态 JSON，用来一眼认出当前接入的是哪个
+     * 校区 / 网段。长度上限跟着 C 版 SCHOOL_NETWORK_SYMBOL(8) 的缓冲走；合法 IPv4
+     * 的前两段最长也就 `255.255` 七个字符，超了就说明抽到的不是 IP。
+     *
+     * @return 取不到时返回 null。
+     */
+    fun schoolSymbol(ip: String?): String? {
+        if (ip == null) return null
+        val firstDot = ip.indexOf('.')
+        val secondDot = if (firstDot < 0) -1 else ip.indexOf('.', firstDot + 1)
+        if (secondDot <= 0) return null
+        return ip.substring(0, secondDot).takeIf { it.length < 8 }
+    }
+
     fun resolveUrl(base: String, ref: String): String {
         if (ref.isEmpty()) return base
         if (ref.startsWith("http://") || ref.startsWith("https://")) return ref

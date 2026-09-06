@@ -44,6 +44,8 @@ data class DialerStatus(
     val reconnects: Int = 0,
     /** 最近一次被判定掉线的墙上时间。 */
     val lastDropMs: Long = 0,
+    /** 校园网标志（wlanuserip 的前两段），仅供展示。 */
+    val schoolSymbol: String = "",
 )
 
 /**
@@ -80,6 +82,12 @@ object DialerEngine {
 
     /** 心跳失败后的重试间隔。 */
     private const val BEAT_RETRY_DELAY_MS = 5_000L
+
+    /** 登出总尝试次数：首次 + 最多 5 次重试，与 C 版 term() 一致。 */
+    private const val LOGOUT_MAX_ATTEMPTS = 6
+
+    /** 登出重试间隔，同样取自 C 版。 */
+    private const val LOGOUT_RETRY_DELAY_MS = 1_000L
 
     /**
      * 已联网但没有我们建立的会话时的复查间隔。
@@ -156,6 +164,12 @@ object DialerEngine {
     /** 循环因失败退出时的提示，避免被收尾的"已停止"覆盖掉。 */
     private var terminalMessage: String? = null
 
+    /**
+     * 校园网标志。跟 C 版的 g_school_network_symbol 一样是全局的：
+     * 只在第一次拿到时赋值，不跟着会话重建而清空。
+     */
+    private var schoolSymbol: String = ""
+
     val isRunning: Boolean
         get() = job?.isActive == true
 
@@ -165,6 +179,7 @@ object DialerEngine {
         stopRequested = false
         reconnects = 0
         lastDrop = 0
+        schoolSymbol = ""
         this.sleeper = sleeper
         job = scope.launch {
             try {
@@ -448,6 +463,7 @@ object DialerEngine {
             AppLog.error("未能从 Ticket URL 提取 wlanuserip / wlanacip")
             return false
         }
+        noteSchoolSymbol(clientIp)
 
         // 整套认证最多十几个请求、每个 10 秒超时；用户点了停止不该等上一两分钟
         if (stopRequested) return false
@@ -638,17 +654,56 @@ object DialerEngine {
         return true
     }
 
+    /**
+     * 登出。失败会重试，最多 [LOGOUT_MAX_ATTEMPTS] 次、每次隔 1 秒，与 C 版 term() 一致。
+     *
+     * 重试不是为了好看：登出没发出去，AC 那边的会话就还挂着，占着账号的
+     * "同时在线设备数"。账号只允许一台设备时，下一次认证会被自己刚才那个
+     * 残留会话挤掉，表现就是"断开后立即重连反而连不上"。
+     *
+     * 这里用 Thread.sleep 而不是 [Sleeper]：间隔只有 1 秒，不值得上闹铟，
+     * 而且本函数也会从非 suspend 的 [serviceSession] 里被调用。
+     * 代价是网络不通时停止服务最多多花几秒——C 版同样如此。
+     */
     private fun logout(settings: AppSettings) {
         val session = cipher ?: return
         if (termUrl.isEmpty()) return
         val ua = settings.channel.userAgent
-        val payload = session.encrypt(Cctp.keepAliveXml(ua, identity, clientIp, ticket)) ?: return
-        val resp = http.post(termUrl, payload, ua, identity.clientId, algoId)
-        if (resp.status == NetStatus.HAVE_RES || resp.status == NetStatus.SUCCESS) {
-            AppLog.info("已登出")
-        } else {
-            AppLog.error("登出失败")
+        val payload = session.encrypt(Cctp.keepAliveXml(ua, identity, clientIp, ticket)) ?: run {
+            AppLog.error("加密登出 XML 失败")
+            return
         }
+        for (attempt in 1..LOGOUT_MAX_ATTEMPTS) {
+            val resp = http.post(termUrl, payload, ua, identity.clientId, algoId)
+            if (resp.status == NetStatus.HAVE_RES || resp.status == NetStatus.SUCCESS) {
+                AppLog.info(if (attempt == 1) "已登出" else "已登出 (重试 ${attempt - 1} 次后成功)")
+                return
+            }
+            if (attempt == LOGOUT_MAX_ATTEMPTS) break
+            AppLog.warn(
+                "登出失败 (${resp.status}), ${LOGOUT_RETRY_DELAY_MS / 1000} 秒后重试: " +
+                    "第 $attempt 次, 最多 ${LOGOUT_MAX_ATTEMPTS - 1} 次",
+            )
+            Thread.sleep(LOGOUT_RETRY_DELAY_MS)
+        }
+        AppLog.error("登出失败, 已重试 ${LOGOUT_MAX_ATTEMPTS - 1} 次, 会话可能在服务端残留")
+    }
+
+    /**
+     * 记下校园网标志 = wlanuserip 的前两段（如 10.23），对应 C 版 get_school_ip_symbol()。
+     *
+     * 纯展示用：C 版把它放进 web UI 的状态 JSON，用来一眼认出当前接入的是哪个
+     * 校区 / 网段。C 版从重定向落地页 last_location 的 wlanuserip 取，而我们从
+     * ticket-url 的同名参数取——同一个值，只是手里现成就有。提取规则在 [Cctp.schoolSymbol]。
+     */
+    private fun noteSchoolSymbol(ip: String) {
+        if (schoolSymbol.isNotEmpty()) return
+        val symbol = Cctp.schoolSymbol(ip) ?: run {
+            AppLog.warn("从 wlanuserip 取不出校园网标志: $ip")
+            return
+        }
+        schoolSymbol = symbol
+        AppLog.info("获取到校园网标志: $symbol")
     }
 
     /** 服务端返回了 code/reason 时把它翻译成可读提示。 */
@@ -759,6 +814,7 @@ object DialerEngine {
             beatFailures = beatFailures,
             reconnects = reconnects,
             lastDropMs = lastDrop,
+            schoolSymbol = schoolSymbol,
         )
     }
 
