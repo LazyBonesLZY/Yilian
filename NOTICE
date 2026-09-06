@@ -6,3 +6,10 @@ Copyright 2026 Yilian contributors
 This product includes software derived from ESurfingClient-CVersion
 (https://github.com/BadGhost520/ESurfingClient-CVersion),
 licensed under the Apache License, Version 2.0.
+
+Portions are derived from unmerged pull requests to that project:
+  - PR #37 (Windows-family algorithms), by Rsplwe
+  - PR #39 (iOS / macOS channels and dynamic ZSM unwrapping), by MiaM1ku
+
+This product bundles XZ for Java (https://tukaani.org/xz/java.html),
+which is in the public domain, used for LZMA1 decoding.

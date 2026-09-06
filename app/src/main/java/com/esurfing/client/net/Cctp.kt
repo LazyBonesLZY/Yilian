@@ -6,11 +6,17 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 认证会话里需要随请求携带的身份字段。 */
+/**
+ * 认证会话里需要随请求携带的身份字段。
+ *
+ * [osTag] 单独存一份而不是复用 [hostName]：Android 通道两者相同（都是那串随机 hex），
+ * 但 iOS / macOS 通道要报成 "iPhone iOS 17.0" 这样的系统标识，与主机名不是一回事。
+ */
 data class Identity(
     val clientId: String,
     val hostName: String,
     val macAddress: String,
+    val osTag: String = hostName,
 )
 
 /** CCTP 报文组包与解析，逐字对应 C 版 PlatformUtils.c 的实现。 */
@@ -36,11 +42,17 @@ object Cctp {
     fun localTime(): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
-    /** 每次认证前重新生成一组随机身份（与 C 版 refresh_states 一致）。 */
-    fun newIdentity(): Identity {
+    /**
+     * 每次认证前重新生成一组随机身份（与 C 版 refresh_states 一致）。
+     *
+     * MAC 与 Client-ID 始终随机；主机名与 ostag 若通道给了固定值就用它
+     * （iOS / macOS 要伪装成真机），否则沿用随机 hex。
+     */
+    fun newIdentity(fixedHostName: String? = null, fixedOsTag: String? = null): Identity {
         val hostBytes = ByteArray(5).also { random.nextBytes(it) }
         hostBytes[0] = (hostBytes[0].toInt() and 0xFE).toByte()
-        val hostName = hostBytes.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        val hostName = fixedHostName
+            ?: hostBytes.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
 
         val macBytes = ByteArray(6).also { random.nextBytes(it) }
         macBytes[0] = (macBytes[0].toInt() and 0xFE).toByte()
@@ -57,7 +69,7 @@ object Cctp {
             append(hex, 16, 20); append('-')
             append(hex, 20, 32)
         }
-        return Identity(clientId, hostName, mac)
+        return Identity(clientId, hostName, mac, fixedOsTag ?: hostName)
     }
 
     fun ticketXml(userAgent: String, identity: Identity, clientIp: String, acIp: String): String = buildString {
@@ -70,7 +82,7 @@ object Cctp {
         append("    <ipv4>").append(clientIp).append("</ipv4>\n")
         append("    <ipv6></ipv6>\n")
         append("    <mac>").append(identity.macAddress).append("</mac>\n")
-        append("    <ostag>").append(identity.hostName).append("</ostag>\n")
+        append("    <ostag>").append(identity.osTag).append("</ostag>\n")
         append("    <gwip>").append(acIp).append("</gwip>\n")
         append("</request>\n")
     }
@@ -110,7 +122,7 @@ object Cctp {
         append("    <ticket>").append(ticket).append("</ticket>\n")
         append("    <ipv6></ipv6>\n")
         append("    <mac>").append(identity.macAddress).append("</mac>\n")
-        append("    <ostag>").append(identity.hostName).append("</ostag>\n")
+        append("    <ostag>").append(identity.osTag).append("</ostag>\n")
         append("</request>\n")
     }
 

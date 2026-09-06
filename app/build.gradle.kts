@@ -44,8 +44,8 @@ android {
         applicationId = "com.esurfing.client"
         minSdk = 26
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
     }
 
     signingConfigs {
@@ -81,6 +81,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    testOptions {
+        unitTests {
+            // AppLog 走 android.util.Log, 单元测试里那些方法是未实现的桩会直接抛异常。
+            // 让它们返回默认值, 这样测试测的是解析逻辑本身, 而不是被日志绊倒。
+            isReturnDefaultValues = true
+        }
+    }
+
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
     }
@@ -105,6 +113,8 @@ if (!hasReleaseSigning) {
 dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.kotlinx.coroutines.android)
+    // iOS/macOS 通道的动态 ZSM 模块是 LZMA1 压缩的, Android 平台没有内建解码器
+    implementation(libs.xz)
     implementation(libs.miuix.ui)
     implementation(libs.miuix.preference)
     implementation(libs.miuix.icons)

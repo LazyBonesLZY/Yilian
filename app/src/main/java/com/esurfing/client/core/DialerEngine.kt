@@ -6,6 +6,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.SystemClock
 import com.esurfing.client.core.cipher.CipherFactory
+import com.esurfing.client.core.cipher.DynamicZsm
 import com.esurfing.client.core.cipher.SessionCipher
 import com.esurfing.client.net.Cctp
 import com.esurfing.client.net.HttpEngine
@@ -450,7 +451,7 @@ object DialerEngine {
 
         // 整套认证最多十几个请求、每个 10 秒超时；用户点了停止不该等上一两分钟
         if (stopRequested) return false
-        if (!initSession(ua)) return false
+        if (!initSession(settings)) return false
         if (stopRequested) return false
         if (!requestTicket(ua)) return false
         if (stopRequested) return false
@@ -469,22 +470,67 @@ object DialerEngine {
         return true
     }
 
-    /** 首包用全零 Algo-ID POST，服务端回一个头部带 Algo-ID 的 ZSM 交付包。 */
-    private fun initSession(userAgent: String): Boolean {
+    /**
+     * 首包 POST ticket.cgi，服务端回一个 ZSM 交付包，从里面拿到会话算法。
+     *
+     * 有两种交付包，处理方式完全不同：
+     * - **静态**（Android / Linux / Windows 通道）：头部带一个 Algo-ID，
+     *   到 [CipherFactory] 里查硬编码密钥表。
+     * - **动态**（iOS / macOS 通道）：正文是 TEA + LZMA 压缩的 JS 模块，
+     *   密钥每次会话都不一样，要现场解包；头部那个 UUID 只是模块 ID，查表查不到。
+     *
+     * 判定不只看用户选的通道，也看包本身的结构（[DynamicZsm.looksLikeDynamicZsm]）——
+     * 服务端给什么由它决定，不由客户端的选择决定，两边都留了回退路径。
+     */
+    private fun initSession(settings: AppSettings): Boolean {
         publish(DialerState.AUTHENTICATING, "正在初始化会话")
-        val resp = http.post(ticketUrl, Cctp.NULL_ALGO_ID, userAgent, identity.clientId, Cctp.NULL_ALGO_ID)
+        val userAgent = settings.channel.userAgent
+        // 动态通道首包发空 body；静态通道发全零 Algo-ID
+        val firstBody = if (settings.channel.dynamicZsm) "" else Cctp.NULL_ALGO_ID
+        val resp = http.post(ticketUrl, firstBody, userAgent, identity.clientId, Cctp.NULL_ALGO_ID)
         if (resp.status != NetStatus.HAVE_RES || resp.bodyBytes == null) {
             AppLog.error("初始化会话失败")
             return false
         }
-        AppLog.debug("交付包 ${resp.bodyBytes.size} 字节, 头部: ${Cctp.deliveryHeader(resp.bodyBytes)}")
-        val id = Cctp.extractAlgoId(resp.bodyBytes) ?: run {
+        val body = resp.bodyBytes
+        val dynamic = DynamicZsm.looksLikeDynamicZsm(body)
+        AppLog.debug("交付包 ${body.size} 字节, 动态模块: ${if (dynamic) "是" else "否"}")
+
+        if (settings.channel.dynamicZsm || dynamic) {
+            if (!settings.channel.dynamicZsm) {
+                AppLog.warn("当前通道不是 iOS/macOS, 但服务端下发了动态模块, 按动态密钥解包")
+            }
+            val result = DynamicZsm.createCipher(body)
+            if (result != null) {
+                cipher = result.first
+                algoId = result.second
+                AppLog.info("动态 ZSM 会话已建立, 模块 ID: $algoId")
+                return true
+            }
+            // 选了 iOS/macOS 却解不开：没有静态密钥可退，直接失败
+            if (settings.channel.dynamicZsm) {
+                fail("动态 ZSM 解包失败, 请把日志反馈上来")
+                return false
+            }
+            AppLog.warn("动态 ZSM 解包失败, 回退到静态密钥表")
+        }
+
+        AppLog.debug("交付包头部: ${Cctp.deliveryHeader(body)}")
+        val id = Cctp.extractAlgoId(body) ?: run {
             AppLog.error("无法从交付包解析 Algo-ID")
             publish(DialerState.AUTHENTICATING, "解析 Algo-ID 失败")
             return false
         }
         AppLog.info("Algo ID: $id")
         val created = CipherFactory.create(id) ?: run {
+            // 查不到静态密钥时再试一次动态解包：有些 AC 会给结构不标准的动态模块
+            AppLog.warn("静态密钥表里没有 $id, 尝试按动态模块解包")
+            val fallback = DynamicZsm.createCipher(body)
+            if (fallback != null) {
+                cipher = fallback.first
+                algoId = fallback.second
+                return true
+            }
             fail("服务器下发了尚未支持的算法: $id")
             return false
         }
@@ -669,7 +715,10 @@ object DialerEngine {
         forceProbe = false
         beatFailures = 0
         portalHeaders.reset()
-        identity = Cctp.newIdentity()
+        // 主机名/ostag 跟着当前通道走：iOS/macOS 要一直报成真机的样子，
+        // 换身份时不能退回随机 hex, 否则服务端会看到"iPhone 突然改名"。
+        val channel = SettingsStore.settings.value.channel
+        identity = Cctp.newIdentity(channel.hostName, channel.osTag)
         AppLog.debug("已重置身份: Client-ID ${identity.clientId}, MAC ${identity.macAddress}")
     }
 

@@ -11,6 +11,7 @@
 
 | | |
 |---|---|
+| 认证通道 | Android / Linux / Windows / iOS / macOS |
 | 最低系统 | Android 8.0（API 26） |
 | 包名 | `com.esurfing.client` |
 | 许可证 | Apache-2.0 |
@@ -21,6 +22,7 @@
 
 - 完整 CCTP 认证流程：探测 → 跟随 BAS 重定向取门户配置 → 初始化会话取 Algo-ID → 取 ticket → 登录 → 心跳 → 登出
 - **34 个 Algo-ID 全部覆盖**（C 版 24 个 + 上游 PR #37 的 10 个 Windows 系），与 C 版逐字节一致，纯 Kotlin 实现无 native 依赖
+- **五种认证通道**：Android、iOS、macOS 各有对应的 User-Agent 与设备标识；iOS / macOS 走服务端动态下发密钥
 - 前台服务常驻，可选开机自启
 - **掉线检测与自动重连**：账号被限制多设备时会被静默踢下线，本客户端会主动发现并重新认证
 - 两档保活策略，在省电与及时性之间取舍
@@ -53,6 +55,41 @@ AC 会把失效的会话与那组身份绑定，拿旧身份重认证会被直�
 
 省电优先模式下每次探测都要把设备从 Doze 唤醒，因此最快按 45 秒执行；想要 20 秒请切到稳定优先。
 首页在发生过掉线后会显示自动重连次数与上次掉线时间。
+
+## 认证通道
+
+「设置 → 认证」里选，通道决定 User-Agent、主机名与上报的系统标识。
+
+| 通道 | User-Agent | 密钥来源 |
+|---|---|---|
+| Android 11 / Android VPN | `CCTP/android11_64/2104`、`CCTP/android64_vpn/2093` | 内置密钥表（按 Algo-ID 查） |
+| iOS | `CCTP/iOSdy/4023` | **服务端动态下发** |
+| macOS | `CCTP/macdy/5019` | **服务端动态下发** |
+
+iOS / macOS 这两个通道（移植自上游
+[PR #39](https://github.com/BadGhost520/ESurfingClient-CVersion/pull/39)）与前面几族的
+工作方式完全不同：`ticket.cgi` 首包用**空 body** 请求，服务端返回一个 PacketTunnel / GDCV
+动态模块——正文是 TEA 加密 + LZMA 压缩的一段 JS，会话密钥就藏在里面，每次都不一样，
+头部那个 UUID 只是模块 ID，查内置密钥表是查不到的。客户端要现场解开：
+
+```
+[3 字节头][Pascal 串][Pascal 串 = 模块 UUID]
+[5 字节 LZMA props][u32 LE: 高 4 位 type=2 + 低 28 位解压后长度]
+[TEA 密文 → LZMA → 明文]
+                       ├─ [0xFA] IV 长度 / [0xFC] 密钥长度 / [0xFF] 密钥偏移
+                       └─ [0x103…] 一段 JS，里面的 `var codex = 0xNN` 决定用哪个算法
+```
+
+`codex` 落在 1..9（oCode）时复用现有的 Android 算法实现，只是密钥/IV 换成模块下发的；
+≥ 16 是 nCode，上游也还没移植，遇到会明确报错而不是拿错算法硬跑。
+
+判定不只看用户选了哪个通道，也看包本身的结构——服务端给什么由它决定：选了 Android
+却收到动态模块会自动切过去，反之解不开动态模块时会回退查内置表。
+
+> iOS 通道上游作者在校园网实测过（3 个账号可拉 ZSM、取 Ticket、登录、心跳）；
+> macOS 是按 GDCV `2.1.5020.2403211` 对齐协议、尚未同样验证。
+> 本项目手上没有 iOS 设备可抓包，因此这两个通道的**解包链路**用合成模块做了逐字节回归，
+> 但**真机联通性**未验证。认证失败请开 DEBUG 日志反馈。
 
 ## 保活与耗电
 
@@ -201,18 +238,22 @@ Releases 里的 APK 由固定的发布 key 签名，升级请沿用同一来源�
 CipherVectorTest        Android 算法集与 C 版逐字节一致（33 条固定向量）
 LinuxCipherVectorTest   Linux 算法集与 C 版逐字节一致（18 条固定向量）
 WindowsCipherVectorTest Windows 算法集逐字节一致，并盯住 AES-CBC 的 IV 前缀与确定性（30 条）
+DynamicZsmTest          iOS/macOS 动态模块解包：模块 ID / 密钥 / IV / codex / 密文全链路比对
 LegacyCipherVectorTest  旧版算法集逐字节一致，并守住"复用现行实现"的等价前提
 CctpAlgoIdTest          从 ZSM 交付包的二进制正文里解析 Algo-ID
 CctpParsingTest         重定向 URL 解析、门户配置解析、MD5、随机身份
 ```
 
-`app/src/test/resources/` 下四份 `cipher_vectors*.tsv` 都是用 C 版算法直接跑出来的密文向量。
+`app/src/test/resources/` 下四份 `cipher_vectors*.tsv`（以及 `zsm/` 里的合成模块） 都是用 C 版算法直接跑出来的密文向量。
 测试里的 IP / MAC / 会话材料都是合成值，不含任何真实抓包数据。
 
 ## 致谢与许可
 
 - 协议实现与算法移植自 [BadGhost520/ESurfingClient-CVersion](https://github.com/BadGhost520/ESurfingClient-CVersion)（Apache-2.0）
+- iOS / macOS 通道与动态 ZSM 解包移植自 [MiaM1ku 的 PR #39](https://github.com/BadGhost520/ESurfingClient-CVersion/pull/39)
+- Windows 系算法移植自 [Rsplwe 的 PR #37](https://github.com/BadGhost520/ESurfingClient-CVersion/pull/37)
 - UI 组件来自 [compose-miuix-ui/miuix](https://github.com/compose-miuix-ui/miuix)
+- LZMA 解码用 [XZ for Java](https://tukaani.org/xz/java.html)（公有领域）
 
 本项目以 Apache-2.0 授权，详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
 

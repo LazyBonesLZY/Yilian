@@ -12,3 +12,7 @@
     public static **[] values();
     public static ** valueOf(java.lang.String);
 }
+
+# xz-java 里有一些只在 XZ/LZMA2 路径上用到的可选类, 我们只用裸 LZMA1 解码,
+# R8 剪掉未引用的部分是对的, 但会为缺失的引用报警。
+-dontwarn org.tukaani.xz.**

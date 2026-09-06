@@ -402,6 +402,19 @@ private fun SettingsPage(modifier: Modifier, padding: PaddingValues, settings: A
                 )
             }
         }
+        item {
+            Text(
+                modifier = Modifier.padding(horizontal = CardPadding, vertical = 8.dp),
+                text = if (settings.channel.dynamicZsm) {
+                    "iOS / macOS 通道的密钥由服务端每次会话动态下发, 不使用内置密钥表。" +
+                        "主机名会报成 ${settings.channel.hostName}。若认证失败请把日志反馈上来。"
+                } else {
+                    "通道决定 User-Agent 与上报的系统标识。若认证一直失败, 可换一个通道试试。"
+                },
+                fontSize = 12.sp,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+        }
 
         item { SmallTitle(text = "电量") }
         item {

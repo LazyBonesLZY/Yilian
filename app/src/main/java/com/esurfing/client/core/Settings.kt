@@ -4,10 +4,38 @@ import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
-/** 认证通道，对应原客户端的 User-Agent 选择。 */
-enum class Channel(val label: String, val userAgent: String) {
+/**
+ * 认证通道，对应原客户端的 User-Agent 与身份字段。
+ *
+ * [dynamicZsm] 为 true 的通道（iOS / macOS）不走"Algo-ID → 硬编码密钥表"：
+ * ticket.cgi 首包返回一个动态模块，密钥每次会话都不一样，要现场解包出来。
+ *
+ * [hostName] / [osTag] 为 null 时沿用随机身份里的主机名（Android 通道的做法）；
+ * iOS / macOS 通道要报成真机的样子，所以写死。
+ */
+enum class Channel(
+    val label: String,
+    val userAgent: String,
+    val hostName: String? = null,
+    val osTag: String? = null,
+    val dynamicZsm: Boolean = false,
+) {
     ANDROID_11("Android 11 (2104)", "CCTP/android11_64/2104"),
     ANDROID_VPN("Android VPN (2093)", "CCTP/android64_vpn/2093"),
+    IOS(
+        label = "iOS (4023)",
+        userAgent = "CCTP/iOSdy/4023",
+        hostName = "iPhone 14",
+        osTag = "iPhone iOS 17.0",
+        dynamicZsm = true,
+    ),
+    MACOS(
+        label = "macOS (5019)",
+        userAgent = "CCTP/macdy/5019",
+        hostName = "MacBookPro",
+        osTag = "macOS,14.4",
+        dynamicZsm = true,
+    ),
 }
 
 /** 保活策略：省电与及时性之间的取舍。 */
