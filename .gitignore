@@ -4,3 +4,8 @@ build/
 *.iml
 .idea/
 .kotlin/
+
+# 签名材料绝不入库
+keystore.properties
+*.jks
+*.keystore

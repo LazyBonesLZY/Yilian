@@ -15,6 +15,8 @@
 | 包名 | `com.esurfing.client` |
 | 许可证 | Apache-2.0 |
 
+**下载**：[Releases](https://github.com/LazyBonesLZY/Yilian/releases) 页面的 `app-release.apk`。
+
 ## 功能
 
 - 完整 CCTP 认证流程：探测 → 跟随 BAS 重定向取门户配置 → 初始化会话取 Algo-ID → 取 ticket → 登录 → 心跳 → 登出
@@ -130,7 +132,21 @@ C 版还支持 6 个 Linux 系算法（`1A7343EC`、`45433DCF`、`4BA5496A`、`6
 ./gradlew :app:testDebugUnitTest
 ```
 
-Release 目前用 debug 签名，自行发布请换成自己的签名配置。
+### 签名
+
+自行发布需要一份签名。把 `keystore.properties.example` 复制为 `keystore.properties`
+（已 gitignore）填好，或改用环境变量 `YILIAN_STORE_FILE` / `YILIAN_STORE_PASSWORD` /
+`YILIAN_KEY_ALIAS` / `YILIAN_KEY_PASSWORD`：
+
+```bash
+keytool -genkeypair -v -keystore yilian-release.jks -storetype PKCS12 \
+  -alias yilian -keyalg RSA -keysize 4096 -validity 10950
+```
+
+未配置时 release 产物**不签名**，也不会静默退回 debug 签名——debug key 是公开的，
+用它签的包谁都能覆盖安装，且换机安装会因签名不一致失败。
+
+Releases 里的 APK 由固定的发布 key 签名，升级请沿用同一来源；换签名需先卸载重装。
 
 ## 测试
 
