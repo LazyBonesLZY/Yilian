@@ -1,0 +1,19 @@
+name: Install Android SDK 37
+description: 安装 compileSdk 37 和对应 build-tools
+runs:
+  using: composite
+  steps:
+    - name: Install SDK 37
+      shell: bash
+      run: |
+        if [ -z "$ANDROID_HOME" ]; then
+          echo "ANDROID_HOME is empty" >&2
+          exit 1
+        fi
+        SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)"
+        if [ -z "$SDKMANAGER" ]; then
+          echo "sdkmanager not found under $ANDROID_HOME" >&2
+          exit 1
+        fi
+        yes | "$SDKMANAGER" --licenses >/dev/null || true
+        "$SDKMANAGER" --install "platforms;android-37.0" "build-tools;37.0.0"

@@ -272,6 +272,10 @@ keytool -genkeypair -v -keystore yilian-release.jks -storetype PKCS12 \
 
 Releases 里的 APK 由固定的发布 key 签名，升级请沿用同一来源；换签名需先卸载重装。
 
+推送 `v*` 标签会在 GitHub Actions 里构建 release。签名材料放在仓库 secret：
+`YILIAN_KEYSTORE_BASE64`、`YILIAN_STORE_PASSWORD`、`YILIAN_KEY_ALIAS`、`YILIAN_KEY_PASSWORD`。
+四个都在时才签名并发布；缺任何一个就只留下未签名产物，不会上传到 Release。
+
 ## 测试
 
 ```
