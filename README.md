@@ -248,7 +248,7 @@ C 版里这九个连同密钥被整体注释掉了（标注"已弃用"），但�
 
 ## 构建
 
-需要 JDK 21，`compileSdk 37`（Miuix 0.9.4 的要求）。
+需要 JDK 21，`compileSdk 37`。Miuix 0.9.4 带进来的 Compose 1.12 要求 AGP 9.1 以上，本项目用 9.4.1。
 
 ```bash
 ./gradlew :app:assembleDebug      # 产物在 app/build/outputs/apk/debug/
