@@ -44,8 +44,8 @@ android {
         applicationId = "com.esurfing.client"
         minSdk = 26
         targetSdk = 37
-        versionCode = 5
-        versionName = "1.4.0"
+        versionCode = 6
+        versionName = "1.5.0"
     }
 
     signingConfigs {
@@ -79,8 +79,8 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 
     testOptions {
@@ -97,9 +97,10 @@ android {
 }
 
 kotlin {
-    jvmToolchain(17)
+    // Miuix 0.9.4 自身用 JDK 21 编出 class 文件，本模块也对齐到 21。
+    jvmToolchain(21)
     compilerOptions {
-        jvmTarget = JvmTarget.JVM_17
+        jvmTarget = JvmTarget.JVM_21
     }
 }
 

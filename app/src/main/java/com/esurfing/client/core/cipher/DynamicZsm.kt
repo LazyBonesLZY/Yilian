@@ -90,6 +90,18 @@ internal object DynamicZsm {
         return cipher to blob.algoId
     }
 
+    /**
+     * 用存档里的 codex / 密钥重建会话。对应 C 版 init_ios_cipher_from_blob：
+     * 进程被强杀后补登出时，动态模块已经不在了，只能靠上次记下的材料。
+     */
+    fun resumeCipher(type: Int, key: ByteArray, iv: ByteArray?): SessionCipher? {
+        if (type !in 1..9) {
+            AppLog.error("会话存档的 codex $type 不在 oCode 1-9, 无法补登出")
+            return null
+        }
+        return createOCodeCipher(type, key, iv)
+    }
+
     /** 解开模块外层：头部 → TEA → LZMA → 取密钥/IV/JS。 */
     fun unwrap(data: ByteArray?): Blob? {
         if (data == null || data.size < 15) {

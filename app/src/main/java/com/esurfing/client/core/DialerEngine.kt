@@ -10,6 +10,7 @@ import com.esurfing.client.core.cipher.DynamicZsm
 import com.esurfing.client.core.cipher.SessionCipher
 import com.esurfing.client.net.Cctp
 import com.esurfing.client.net.HttpEngine
+import com.esurfing.client.net.HttpResponse
 import com.esurfing.client.net.Identity
 import com.esurfing.client.net.NetStatus
 import com.esurfing.client.net.PortalHeaders
@@ -117,6 +118,18 @@ object DialerEngine {
     private var acIp: String = ""
     private var keepInterval: Long = 0
 
+    /** 当前会话是不是动态 ZSM。补登出时静态通道靠 Algo-ID 查表，动态通道靠密钥。 */
+    private var dynamicSession: Boolean = false
+
+    /** 动态模块的 codex。静态通道用不到。 */
+    private var codex: Int = 0
+
+    /** 动态模块下发的密钥与 IV，只为补登出存档，静态通道为 null。 */
+    private var sessionKey: ByteArray? = null
+    private var sessionIv: ByteArray? = null
+
+    private var appContext: Context? = null
+
     /** 认证完成的墙上时间，仅用于界面展示。 */
     private var authTime: Long = 0
 
@@ -215,6 +228,9 @@ object DialerEngine {
 
     private suspend fun runLoop(context: Context, sleeper: Sleeper) {
         AppLog.info("拨号服务已启动")
+        appContext = context.applicationContext
+        // 上次被强杀时没来得及登出。先补一次，再开始新会话。
+        SessionArchive.resumeLogout(context, http)
         // resetSession 里会生成一组新身份
         resetSession()
         terminalMessage = null
@@ -384,31 +400,59 @@ object DialerEngine {
     private fun beatIntervalMs(): Long = Timing.beatIntervalMs(keepInterval)
 
     /**
-     * 探测是否被门户拦截。
+     * 探测是否被门户拦截。顺序与 C 版 CheckNetwork.c 一致：
      *
-     * 三种回应都要处理，只认 302 是不够的：
-     * - 204 / 404：通了（C 版同样把 404 当作已联网）；
-     * - 3xx 带 Location：被拦截，需要认证；
-     * - 200 带正文：有的 AC 不发 302，直接把门户页当响应体返回。这种情况必须看
-     *   正文里有没有门户标记，否则会一路掉进"网络错误"分支干等，永远不去认证。
+     * 1. generate_204：204 / 301 已联网，302 需要认证；连不上才换下一个。
+     * 2. 1.1.1.1：同样，301 已联网，302 需要认证。
+     * 3. 两台认证服务器：外网都不通时，200 只说明 AC 还活着，不算能上网；
+     *    302 仍按需要认证处理。两台都连不上才是网络错误。
+     *
+     * 200 带门户正文的情况 C 版不认，但有的 AC 不发 302、直接把门户页当响应体
+     * 返回。那种必须看正文，否则会一路掉进「网络错误」干等，永远不去认证。
      */
     private fun probe(settings: AppSettings): NetStatus {
-        val resp = http.get(Cctp.DETECT_URL, settings.channel.userAgent, identity.clientId)
-        return when (resp.status) {
-            NetStatus.NOT_FOUND -> NetStatus.SUCCESS
-
-            NetStatus.HAVE_RES -> {
-                if (Cctp.looksLikePortalPage(resp.body)) {
-                    AppLog.debug("探测返回 200 且含门户标记, 视为需要认证")
-                    NetStatus.REDIRECT
-                } else {
-                    AppLog.verbose("探测返回 200, 未见门户标记, 视为已联网")
-                    NetStatus.SUCCESS
+        val ua = settings.channel.userAgent
+        for ((index, url) in Cctp.PROBE_URLS.withIndex()) {
+            val onInternet = index < 2
+            val resp = http.get(url, ua, identity.clientId)
+            val verdict = interpretProbe(resp, onInternet)
+            if (verdict != null) {
+                if (index > 0) {
+                    AppLog.warn("主探测不通, 改用 " + url.substringAfter("://") + ": " + verdict)
                 }
+                return verdict
             }
-
-            else -> resp.status
+            AppLog.warn("探测 " + url.substringAfter("://") + " 无响应, 换下一个")
         }
+        return NetStatus.TIMEOUT
+    }
+
+    /**
+     * @param onInternet 这一跳打的是外网地址。认证服务器返回 200 不能当成已联网。
+     * @return null 表示这一跳连不上，调用方应换下一个地址。
+     */
+    private fun interpretProbe(resp: HttpResponse, onInternet: Boolean): NetStatus? = when (resp.status) {
+        NetStatus.SUCCESS, NetStatus.NOT_FOUND -> if (onInternet) NetStatus.SUCCESS else null
+
+        NetStatus.REDIRECT -> if (resp.code == 301 && onInternet) {
+            NetStatus.SUCCESS
+        } else {
+            NetStatus.REDIRECT
+        }
+
+        NetStatus.HAVE_RES -> when {
+            Cctp.looksLikePortalPage(resp.body) -> {
+                AppLog.debug("探测返回 200 且含门户标记, 视为需要认证")
+                NetStatus.REDIRECT
+            }
+            onInternet -> {
+                AppLog.verbose("探测返回 200, 未见门户标记, 视为已联网")
+                NetStatus.SUCCESS
+            }
+            else -> null
+        }
+
+        else -> null
     }
 
     private fun authenticate(settings: AppSettings): Boolean {
@@ -510,6 +554,7 @@ object DialerEngine {
             if (result != null) {
                 cipher = result.first
                 algoId = result.second
+                rememberDynamic(body)
                 AppLog.info("动态 ZSM 会话已建立, 模块 ID: $algoId")
                 return true
             }
@@ -535,6 +580,7 @@ object DialerEngine {
             if (fallback != null) {
                 cipher = fallback.first
                 algoId = fallback.second
+                rememberDynamic(body)
                 return true
             }
             fail("服务器下发了尚未支持的算法: $id")
@@ -588,7 +634,8 @@ object DialerEngine {
             AppLog.error("解密登录响应失败")
             return false
         }
-        AppLog.verbose("登录响应: $decrypted")
+        // 登录响应里可能回显账号，不落明文。失败原因走 reportServerError。
+        AppLog.verbose("登录响应已解密, " + decrypted.length + " 字节")
 
         keepUrl = Cctp.tagValue(decrypted, "keep-url") ?: run {
             reportServerError(decrypted, "登录失败")
@@ -599,6 +646,7 @@ object DialerEngine {
         AppLog.info("Keep-Url: $keepUrl")
         AppLog.info("Term-Url: $termUrl")
         AppLog.info("心跳间隔: $keepInterval 秒")
+        archiveSession(settings)
         return true
     }
 
@@ -672,6 +720,7 @@ object DialerEngine {
             val resp = http.post(termUrl, payload, ua, identity.clientId, algoId)
             if (resp.status == NetStatus.HAVE_RES || resp.status == NetStatus.SUCCESS) {
                 AppLog.info(if (attempt == 1) "已登出" else "已登出 (重试 ${attempt - 1} 次后成功)")
+                appContext?.let { SessionArchive.clear(it) }
                 return
             }
             if (attempt == LOGOUT_MAX_ATTEMPTS) break
@@ -699,6 +748,40 @@ object DialerEngine {
         }
         schoolSymbol = symbol
         AppLog.info("获取到校园网标志: $symbol")
+    }
+
+
+    /** 记下动态模块的 codex 与密钥，登录成功后写进存档。 */
+    private fun rememberDynamic(body: ByteArray) {
+        val blob = DynamicZsm.unwrap(body) ?: return
+        val type = DynamicZsm.parseCdyType(blob.js)
+        dynamicSession = true
+        codex = type
+        sessionKey = blob.key
+        sessionIv = blob.iv
+    }
+
+    private fun archiveSession(settings: AppSettings) {
+        val context = appContext ?: return
+        if (termUrl.isEmpty()) return
+        SessionArchive.save(
+            context,
+            SessionArchive.Snapshot(
+                dynamic = dynamicSession,
+                codex = codex,
+                userAgent = settings.channel.userAgent,
+                termUrl = termUrl,
+                algoId = algoId,
+                clientId = identity.clientId,
+                hostName = identity.hostName,
+                clientIp = clientIp,
+                macAddress = identity.macAddress,
+                osTag = identity.osTag,
+                ticket = ticket,
+                key = sessionKey,
+                iv = sessionIv,
+            ),
+        )
     }
 
     /** 服务端返回了 code/reason 时把它翻译成可读提示。 */
@@ -752,6 +835,10 @@ object DialerEngine {
     private fun resetSession() {
         cipher = null
         algoId = Cctp.NULL_ALGO_ID
+        dynamicSession = false
+        codex = 0
+        sessionKey = null
+        sessionIv = null
         ticket = ""
         keepUrl = ""
         termUrl = ""

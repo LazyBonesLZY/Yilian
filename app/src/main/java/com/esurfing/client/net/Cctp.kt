@@ -24,8 +24,31 @@ object Cctp {
 
     const val NULL_ALGO_ID = "00000000-0000-0000-0000-000000000000"
 
-    /** 探测地址，与 C 版相同：重定向即需认证，404/204 即已联网。 */
-    const val DETECT_URL = "http://223.5.5.5"
+    /**
+     * 连通性探测地址，顺序与 C 版 CheckNetwork.c 一致。
+     *
+     * 只认一个地址会误判：校园网把某个探测域名劫持成门户、或者那台机器自己挂了，
+     * 都会被当成「需要认证」或「网络不通」。主地址不通才换下一个。
+     *
+     * - [0] MIUI generate_204：204 已联网，302 需要认证。域名解析不稳定，
+     *   所以固定解析到 220.181.104.183（C 版 CURLOPT_RESOLVE）。
+     * - [1] 1.1.1.1：301 已联网，302 需要认证。
+     * - [2][3] 两台认证服务器：外网都不通时再看门户自己在不在。
+     *   200 只说明 AC 还活着，不能当成已经能上网。
+     */
+    val PROBE_URLS = listOf(
+        "http://connect.rom.miui.com/generate_204",
+        "http://1.1.1.1",
+        "http://14.146.227.141:7001",
+        "http://121.8.177.212:7001",
+    )
+
+    /** 跟随重定向取门户页时的起点，就是探测链的第一跳。 */
+    const val DETECT_URL = "http://connect.rom.miui.com/generate_204"
+
+    /** generate_204 的固定解析，避开校园 DNS 把这个域名解析丢了。 */
+    const val MIUI_PROBE_HOST = "connect.rom.miui.com"
+    const val MIUI_PROBE_IP = "220.181.104.183"
 
     const val PORTAL_CONFIG_START = "<!--//config.campus.js.chinatelecom.com"
     const val PORTAL_CONFIG_END = "//config.campus.js.chinatelecom.com-->"

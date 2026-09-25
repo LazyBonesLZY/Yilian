@@ -75,7 +75,7 @@ class HttpEngine(private val portalHeaders: PortalHeaders) {
     ): HttpResponse {
         var conn: HttpURLConnection? = null
         try {
-            val target = URL(url)
+            val target = URL(pinnedUrl(url))
             val raw = network?.openConnection(target) ?: target.openConnection()
             conn = (raw as HttpURLConnection).apply {
                 instanceFollowRedirects = false
@@ -184,6 +184,17 @@ class HttpEngine(private val portalHeaders: PortalHeaders) {
                 buffer.toByteArray()
             }
         }.getOrNull()?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * C 版对 generate_204 用 CURLOPT_RESOLVE 钉死 IP。
+     * HttpURLConnection 没有等价选项，改写成直连那个 IP，
+     * 避开校园 DNS 把 connect.rom.miui.com 解析丢了。
+     */
+    private fun pinnedUrl(url: String): String {
+        val prefix = "http://" + Cctp.MIUI_PROBE_HOST
+        if (!url.startsWith(prefix)) return url
+        return "http://" + Cctp.MIUI_PROBE_IP + url.removePrefix(prefix)
     }
 
     private companion object {

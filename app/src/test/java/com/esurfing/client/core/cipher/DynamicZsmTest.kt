@@ -172,6 +172,28 @@ class DynamicZsmTest {
         assertEquals(-1, DynamicZsm.parseCdyType("function nothing() { return 1; }"))
     }
 
+    /**
+     * 补登出拿不到原始模块，只能用存档里的 codex 和密钥重建。
+     * 重建结果必须和当场解包得到的密文逐字节相同，否则补发出去的 term 服务端解不开。
+     */
+    @Test
+    fun resumeCipherMatchesFreshUnwrap() {
+        for (c in cases()) {
+            val fresh = checkNotNull(DynamicZsm.createCipher(moduleBytes(c.name)))
+            val resumed = checkNotNull(DynamicZsm.resumeCipher(c.codex, c.key, c.iv))
+            for (sample in samples) {
+                assertEquals(c.name, fresh.first.encrypt(sample), resumed.encrypt(sample))
+            }
+        }
+    }
+
+    /** 存档里的 codex 超出 oCode 时必须拒绝，不能拿错算法去登出。 */
+    @Test
+    fun resumeRejectsNCode() {
+        assertNull(DynamicZsm.resumeCipher(16, ByteArray(16), null))
+        assertNull(DynamicZsm.resumeCipher(0, ByteArray(16), null))
+    }
+
     /** oCode 只到 9，nCode（>= 16）上游也没移植，必须明确拒绝而不是静默用错算法。 */
     @Test
     fun rejectsNCode() {

@@ -248,7 +248,7 @@ C 版里这九个连同密钥被整体注释掉了（标注"已弃用"），但�
 
 ## 构建
 
-需要 JDK 17，`compileSdk 37`（Miuix 0.9.2 的要求）。
+需要 JDK 21，`compileSdk 37`（Miuix 0.9.4 的要求）。
 
 ```bash
 ./gradlew :app:assembleDebug      # 产物在 app/build/outputs/apk/debug/
@@ -282,6 +282,7 @@ DynamicZsmTest          iOS/macOS 动态模块解包：模块 ID / 密钥 / IV /
 LegacyCipherVectorTest  旧版算法集逐字节一致，并守住"复用现行实现"的等价前提
 CctpAlgoIdTest          从 ZSM 交付包的二进制正文里解析 Algo-ID
 CctpParsingTest         重定向 URL 解析、门户配置解析、MD5、随机身份
+ProbeRotationTest       连通性探测地址顺序与 MIUI 固定 IP，对齐 C 版 CheckNetwork.c
 ```
 
 `app/src/test/resources/` 下四份 `cipher_vectors*.tsv`（以及 `zsm/` 里的合成模块） 都是用 C 版算法直接跑出来的密文向量。
@@ -292,7 +293,7 @@ CctpParsingTest         重定向 URL 解析、门户配置解析、MD5、随机
 - 协议实现与算法移植自 [BadGhost520/ESurfingClient-CVersion](https://github.com/BadGhost520/ESurfingClient-CVersion)（Apache-2.0）
 - iOS / macOS 通道与动态 ZSM 解包移植自 [MiaM1ku 的 PR #39](https://github.com/BadGhost520/ESurfingClient-CVersion/pull/39)
 - Windows 系算法移植自 [Rsplwe 的 PR #37](https://github.com/BadGhost520/ESurfingClient-CVersion/pull/37)
-- UI 组件来自 [compose-miuix-ui/miuix](https://github.com/compose-miuix-ui/miuix)
+- UI 组件来自 [compose-miuix-ui/miuix](https://github.com/compose-miuix-ui/miuix) 0.9.4
 - LZMA 解码用 [XZ for Java](https://tukaani.org/xz/java.html)（公有领域）
 
 本项目以 Apache-2.0 授权，详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
